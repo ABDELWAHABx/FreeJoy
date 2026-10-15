@@ -1,0 +1,16 @@
+<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>FreeJoy · Laptop input test</title>
+<style>body{margin:0;padding:32px;background:#10121b;color:#edf2ff;font:16px system-ui}main{max-width:850px;margin:auto}h1{font-size:28px}p{color:#b9c5d8;line-height:1.6}.pad{padding:22px;margin:15px 0;background:#1c2537;border:1px solid #405577;border-radius:16px}.buttons{display:flex;flex-wrap:wrap;gap:9px}.b{padding:10px;border-radius:8px;background:#2c384f;min-width:35px;text-align:center}.on{background:#54d39a;color:#081b15}.axes{font-family:monospace;margin-top:20px}button{background:#3376d7;color:white;border:0;border-radius:10px;padding:14px;font-size:16px}#status{color:#70e4ac}</style>
+<main><h1>Laptop controller test</h1><p>Keep this page open on the <b>laptop</b>. Click Activate, then hold a button or move a stick on your phone. This reads the laptop browser’s Gamepad API. The controller must be connected to FreeJoy first.</p><button id="activate">Activate tester</button><p id="status">Waiting for input…</p><div id="pads"></div><p>If Windows detects input but this page does not, try Chrome or Edge, click this page, and press a phone button again. Keep the FreeJoy launcher running.</p></main>
+<script>
+const labels=['A','B','X','Y','LB','RB','LT','RT','Back','Start','L3','R3','↑','↓','←','→','Guide'];
+document.querySelector('#activate').onclick=()=>document.querySelector('#status').textContent='Tester active. Press a button on your phone.';
+const cards=new Map();
+function tick(){
+ const all=Array.from(navigator.getGamepads?.()||[]).filter(Boolean);
+ document.querySelector('#status').textContent=all.length?all.length+' controller(s) detected':'No controller exposed by this browser yet. Click Activate and press a phone button.';
+ for(const [id,card] of cards)if(!all.some(p=>p.index===id)){card.remove();cards.delete(id)}
+ for(const p of all){let card=cards.get(p.index);if(!card){card=document.createElement('section');card.className='pad';let heading=document.createElement('h2');heading.textContent='Controller '+(p.index+1)+' · '+p.id;card.append(heading);let buttons=document.createElement('div');buttons.className='buttons';p.buttons.forEach((b,i)=>{let el=document.createElement('span');el.className='b';el.textContent=labels[i]||String(i);buttons.append(el)});card.append(buttons);let axes=document.createElement('div');axes.className='axes';card.append(axes);document.querySelector('#pads').append(card);cards.set(p.index,card)}
+ Array.from(card.querySelectorAll('.b')).forEach((b,i)=>b.classList.toggle('on',p.buttons[i].pressed));card.querySelector('.axes').textContent='Sticks: '+p.axes.map(a=>a.toFixed(2)).join('   ');
+ }requestAnimationFrame(tick)
+}tick();
+</script></html>

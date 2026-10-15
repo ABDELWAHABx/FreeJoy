@@ -42,6 +42,9 @@ self.addEventListener('activate', (event) => {
 
 // Fetch event - network first, fallback to cache
 self.addEventListener('fetch', (event) => {
+    const url = new URL(event.request.url);
+    if (event.request.method !== 'GET' || url.pathname.startsWith('/api/') ||
+        url.pathname.startsWith('/socket.io/') || event.request.headers.has('authorization')) return;
     // Skip cross-origin requests
     if (!event.request.url.startsWith(self.location.origin)) {
         return;

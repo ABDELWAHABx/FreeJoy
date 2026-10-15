@@ -26,7 +26,17 @@ function App() {
     // Initial Routing Logic
     useEffect(() => {
         const path = window.location.pathname;
-        const capabilityFragment = new URLSearchParams(window.location.hash.slice(1));
+        let capabilityFragment = new URLSearchParams(window.location.hash.slice(1));
+        if (path === '/pad') {
+            // Installed launches omit the QR fragment. Restore only this origin's latest room.
+            try {
+                if (capabilityFragment.get('room') && capabilityFragment.get('join')) {
+                    localStorage.setItem('freejoy:last-join', capabilityFragment.toString());
+                } else if (!window.location.hash) {
+                    capabilityFragment = new URLSearchParams(localStorage.getItem('freejoy:last-join') || '');
+                }
+            } catch { /* QR links still work without persistent storage. */ }
+        }
 
         // ROUTE: /pad -> Gamepad Mode (Stateless)
         if (path === '/pad') {
@@ -112,7 +122,6 @@ function App() {
             <div className="h-screen w-full flex flex-col items-center relative overflow-y-auto bg-slate-900 p-4 pb-20 scrollbar-thin scrollbar-thumb-white/10 scrollbar-track-transparent">
                 {/* Background FX */}
                 <div className="fixed inset-0 bg-gradient-to-br from-indigo-950 via-slate-900 to-black animate-gradient-xy pointer-events-none"></div>
-                <div className="fixed inset-0 bg-[url('https://grainy-gradients.vercel.app/noise.svg')] opacity-20 brightness-100 contrast-150 pointer-events-none"></div>
 
                 {/* Header */}
                 <div className="relative z-10 text-center mb-8 mt-12 px-12 overflow-visible">
@@ -193,6 +202,7 @@ function App() {
 
                 {/* Footer with Reset Button */}
                 <div className="relative z-10 mt-12 flex flex-col items-center gap-4">
+                    <a href="/test-controller.html" target="_blank" rel="noreferrer" className="text-blue-300 underline">Test controllers on this laptop</a>
                     <button
                         onClick={() => {
                             if (confirm('Reset room? All controller leases will be disconnected and cleared.')) {

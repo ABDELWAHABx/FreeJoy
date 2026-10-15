@@ -5,6 +5,7 @@ Uses vgamepad to create virtual Xbox 360 controllers on Windows.
 Controlled via stdin JSON messages from Node.js server.
 """
 
+import os
 import sys
 import json
 import vgamepad as vg
@@ -67,7 +68,7 @@ def handle_button(player_id: int, button: str, pressed: bool):
             gamepad.release_button(mapping)
     
     gamepad.update()
-    log(f"P{player_id} {button} {'pressed' if pressed else 'released'}")
+    if os.environ.get("FREEJOY_DEBUG_INPUT") == "1": log(f"P{player_id} {button} {'pressed' if pressed else 'released'}")
 
 
 def handle_analog(player_id: int, stick: str, x: float, y: float):
@@ -89,7 +90,7 @@ def handle_analog(player_id: int, stick: str, x: float, y: float):
         gamepad.right_joystick(x_value=x_int, y_value=y_int)
     
     gamepad.update()
-    log(f"P{player_id} {stick}_stick X:{x:.2f} Y:{y:.2f}")
+    if os.environ.get("FREEJOY_DEBUG_INPUT") == "1": log(f"P{player_id} {stick}_stick X:{x:.2f} Y:{y:.2f}")
 
 
 def handle_disconnect(player_id: int):

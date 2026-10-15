@@ -42,6 +42,7 @@ describe('ProController lease recovery', () => {
     let root: Root;
 
     beforeEach(() => {
+        vi.stubGlobal('ResizeObserver', class { observe() {} disconnect() {} });
         vi.useFakeTimers();
         socketHarness.handlers.clear();
         socketHarness.socket.auth = {};
@@ -50,7 +51,7 @@ describe('ProController lease recovery', () => {
         socketHarness.socket.disconnect.mockReset();
         socketHarness.socket.emit.mockReset();
         window.localStorage.clear();
-        vi.spyOn(window, 'prompt').mockReturnValue('Phone');
+        vi.spyOn(window, 'prompt').mockImplementation(() => { throw new Error('Dialogs unavailable'); });
         container = document.createElement('div');
         document.body.appendChild(container);
         root = createRoot(container);
@@ -60,6 +61,7 @@ describe('ProController lease recovery', () => {
         await act(async () => root.unmount());
         container.remove();
         vi.restoreAllMocks();
+        vi.unstubAllGlobals();
         vi.useRealTimers();
     });
 
@@ -90,8 +92,9 @@ describe('ProController lease recovery', () => {
         expect(socketHarness.socket.emit).toHaveBeenCalledTimes(1);
         expect(socketHarness.socket.emit).toHaveBeenLastCalledWith('join', {
             roomId: 'ABCDEF12',
-            deviceName: 'Phone'
+            deviceName: 'Unknown Device'
         });
+        expect(window.prompt).not.toHaveBeenCalled();
 
         await act(async () => vi.advanceTimersByTimeAsync(31_999));
         expect(oldSocketRegistered).toBe(false);

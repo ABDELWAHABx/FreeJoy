@@ -17,7 +17,7 @@
         }
     ],
     "start_url": "/pad",
-    "display": "standalone",
+    "display": "fullscreen",
     "theme_color": "#0f172a",
     "background_color": "#0f172a",
     "orientation": "landscape"

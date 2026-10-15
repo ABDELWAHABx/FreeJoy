@@ -7,6 +7,7 @@ export class RyujinxPlugin implements IPlugin {
     version = "7.0.0-VGAMEPAD";
     maxPlayers = 4;
     private pythonProcess: ChildProcess | null = null;
+    private stopping = false;
 
     constructor() {
         console.log('[Ryujinx] Initializing Virtual Gamepad Plugin...');
@@ -18,7 +19,7 @@ export class RyujinxPlugin implements IPlugin {
         const pythonScript = path.join(__dirname, '../python/virtual_gamepad.py');
 
         // Spawn Python process
-        this.pythonProcess = spawn('python', [pythonScript], {
+        this.pythonProcess = spawn(process.env.FREEJOY_PYTHON || 'python', [pythonScript], {
             stdio: ['pipe', 'pipe', 'pipe']
         });
 
@@ -34,17 +35,20 @@ export class RyujinxPlugin implements IPlugin {
 
         this.pythonProcess.on('error', (err) => {
             console.error('[Ryujinx] Python process error:', err);
+            process.exit(1);
         });
 
         this.pythonProcess.on('exit', (code, signal) => {
             console.log(`[Ryujinx] Python process exited with code ${code}, signal ${signal}`);
             this.pythonProcess = null;
+            if (!this.stopping) process.exit(1);
         });
 
         console.log('[Ryujinx] Python VGamepad Service started');
     }
 
     async cleanup(): Promise<void> {
+        this.stopping = true;
         console.log('[Ryujinx] Cleaning up Python process...');
         const child = this.pythonProcess;
         if (!child) return;
@@ -92,7 +96,7 @@ export class RyujinxPlugin implements IPlugin {
     }
 
     sendButtonPress(playerIndex: number, button: string, pressed: boolean): void {
-        console.log(`[Ryujinx] P${playerIndex} ${button} ${pressed ? 'pressed' : 'released'}`);
+        if (process.env.FREEJOY_DEBUG_INPUT === '1') console.log(`[Ryujinx] P${playerIndex} ${button} ${pressed ? 'pressed' : 'released'}`);
         this.sendCommand({
             action: 'button',
             playerId: playerIndex,
@@ -102,7 +106,7 @@ export class RyujinxPlugin implements IPlugin {
     }
 
     sendAnalogInput(playerIndex: number, stick: 'left' | 'right', x: number, y: number): void {
-        console.log(`[Ryujinx] P${playerIndex} ${stick}_stick X:${x.toFixed(2)} Y:${y.toFixed(2)}`);
+        if (process.env.FREEJOY_DEBUG_INPUT === '1') console.log(`[Ryujinx] P${playerIndex} ${stick}_stick X:${x.toFixed(2)} Y:${y.toFixed(2)}`);
         this.sendCommand({
             action: 'analog',
             playerId: playerIndex,

@@ -1,0 +1,40 @@
+.controller-workspace{position:fixed;inset:0;display:flex;flex-direction:column;background:radial-gradient(ellipse at 15% 70%,#102b3a,transparent 60%),#10121b;color:#edf2ff;touch-action:auto;user-select:none;font-family:system-ui,sans-serif}
+.controller-toolbar{min-height:48px;display:flex;align-items:center;gap:10px;padding:5px max(12px,env(safe-area-inset-right)) 5px max(12px,env(safe-area-inset-left));background:#171b29;border-bottom:1px solid #30364b;z-index:5}
+.controller-toolbar strong{font-size:17px;white-space:nowrap}.controller-toolbar strong span{font-size:9px;color:#6fe4b2;letter-spacing:1px;margin-left:6px}
+.layout-message{font-size:11px;color:#b7c4d8;flex:1;line-height:1.2}.controller-toolbar button,.layout-tools button,.layout-tools select{background:#293348;border:1px solid #465775;border-radius:9px;color:#f0f5ff;padding:7px 11px;font-size:12px;white-space:nowrap;touch-action:manipulation}
+.controller-toolbar button:first-of-type{background:#3169c9;border-color:#629dff}
+.controller-canvas{touch-action:none;flex:1;position:relative;min-height:0;margin:4px max(8px,env(safe-area-inset-right)) 4px max(8px,env(safe-area-inset-left))}
+.is-editing .controller-canvas{background-image:radial-gradient(#425067 1px,transparent 1px);background-size:20px 20px}
+.control-position{position:absolute;transform:translate(-50%,-50%);touch-action:none}.control-position.selected{outline:2px solid #7ab6ff;outline-offset:4px;border-radius:50%}
+.pad-button,.edit-hit{width:100%;height:100%;border-radius:50%;background:linear-gradient(150deg,#34425b,#1a2030);border:2px solid #526782;color:#e5edff;font-size:clamp(13px,3vmin,24px);font-weight:750;box-shadow:0 5px 0 #070a11,0 10px 25px #0005;touch-action:none}
+.pad-button.is-pressed{background:#416b99;box-shadow:0 1px 0 #070a11;transform:translateY(3px)}.action-A{color:#87e8a1}.action-B{color:#ff8b90}.action-X{color:#7cc5ff}.action-Y{color:#ffdb73}
+.pad-stick{width:100%;height:100%;border-radius:50%;background:radial-gradient(circle,#233344,#0b111a);border:2px solid #405470;display:flex;align-items:center;justify-content:center;touch-action:none;box-shadow:inset 0 0 18px #0009}
+.stick-knob{width:44%;height:44%;border-radius:50%;background:linear-gradient(145deg,#53677e,#273a50);border:2px solid #7ca9c4;display:flex;align-items:center;justify-content:center;color:#a8d9f2;font-weight:700;pointer-events:none;box-shadow:0 5px 15px #0008}
+.edit-hit{background:#243d57aa;border-style:dashed;cursor:grab;box-shadow:none}.layout-tools{display:flex;gap:8px;align-items:center;justify-content:center;padding:8px;min-height:56px;background:#171b29;z-index:5;flex-wrap:wrap}.layout-tools label{display:flex;align-items:center;gap:5px;font-size:12px}.layout-tools input[type=range]{width:110px;touch-action:auto}
+@media(max-width:500px){.layout-message{display:none}.controller-toolbar{gap:6px}.controller-toolbar strong{flex:1}.layout-tools{gap:5px}.layout-tools button{padding:6px 8px}}
+
+
+/* Editor and play share identical canvas geometry. Tools only overlay it. */
+.controller-canvas{position:absolute;inset:0;margin:0}
+.controller-toolbar{position:absolute;inset:0 0 auto;min-height:42px;background:#171b29e8;flex-wrap:wrap}
+.controller-toolbar label{font-size:12px;display:flex;align-items:center;gap:6px}
+.controller-toolbar select,.controller-menu select{background:#293348;color:#fff;border:1px solid #465775;border-radius:7px;padding:6px}
+.layout-tools{position:absolute;bottom:0;left:0;right:0;background:#171b29e8;min-height:48px}
+.floating-menu{position:absolute;z-index:6;top:max(6px,env(safe-area-inset-top));left:calc(50% - 19px);width:38px;height:26px;background:#202b4099;color:#adbbce;border:1px solid #4b607188;border-radius:20px;font-size:23px;line-height:15px;touch-action:manipulation}
+.controller-menu{position:absolute;z-index:7;top:38px;left:50%;transform:translateX(-50%);width:min(360px,90vw);max-height:calc(100dvh - 48px);overflow:auto;display:flex;flex-direction:column;gap:12px;padding:18px;border:1px solid #53637d;border-radius:15px;background:#172131f5;box-shadow:0 10px 40px #0009;touch-action:pan-y}
+.controller-menu button{padding:10px;background:#304766;color:#fff;border:1px solid #566e8e;border-radius:8px}.controller-menu small{font-size:11px;line-height:1.4;color:#b7c4d8}.controller-menu label{display:flex;justify-content:space-between;align-items:center;font-size:12px}
+
+.is-editing .controller-canvas{inset:0}
+
+.symbols-playstation .action-A{color:#82baff}.symbols-playstation .action-B{color:#ff8195}.symbols-playstation .action-X{color:#eba4ec}.symbols-playstation .action-Y{color:#7ae7bc}
+.symbols-playstation .action-A,.symbols-playstation .action-B,.symbols-playstation .action-X,.symbols-playstation .action-Y{font-size:clamp(20px,6vmin,42px);font-weight:500}
+
+.controller-toolbar{inset:42px 8px auto;border-radius:12px}
+.layout-tools{bottom:8px;left:8px;right:8px;border-radius:12px}
+.editor-tools-toggle{position:absolute;top:6px;left:50%;transform:translateX(-50%);z-index:7;border:1px solid #62799a;border-radius:18px;padding:5px 14px;background:#25364dea;color:white;font-size:12px;touch-action:manipulation}
+.pad-button{transition:transform 70ms ease-out,background-color 70ms ease-out;box-shadow:0 4px 0 #070a11; -webkit-tap-highlight-color:transparent}
+.pad-button.is-pressed{transition:none;transform:translate3d(0,3px,0) scale(.96);background:#416b99;box-shadow:0 1px 0 #070a11}
+.stick-knob{will-change:transform;transform:translate3d(0,0,0);transition:transform 85ms ease-out;box-shadow:0 3px 8px #0006}
+.pad-stick.is-held .stick-knob{transition:none}
+.control-position{contain:layout style}
+@media(prefers-reduced-motion:reduce){.pad-button,.stick-knob{transition:none}}

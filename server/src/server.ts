@@ -126,6 +126,23 @@ export async function bootstrap(): Promise<void> {
         await new Promise<void>((resolve) => httpServer.close(() => resolve()));
     };
 
+    app.post('/api/shutdown', (request, response) => {
+        if (!authority.permitsHost(readBearerToken(request))) {
+            response.sendStatus(403); return;
+        }
+        response.json({ stopping: true });
+        setImmediate(() => void shutdown('host request'));
+    });
+
+    const launcherPid = Number(process.env.FREEJOY_LAUNCHER_PID);
+    if (Number.isInteger(launcherPid) && launcherPid > 0) {
+        const watchLauncher = setInterval(() => {
+            try { process.kill(launcherPid, 0); }
+            catch { clearInterval(watchLauncher); void shutdown('launcher closed'); }
+        }, 2_000);
+        watchLauncher.unref();
+    }
+
     process.once('SIGINT', () => void shutdown('SIGINT'));
     process.once('SIGTERM', () => void shutdown('SIGTERM'));
 }
