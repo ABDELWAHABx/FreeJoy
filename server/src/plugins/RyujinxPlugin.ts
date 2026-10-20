@@ -5,7 +5,9 @@ import { spawn, ChildProcess } from 'child_process';
 export class RyujinxPlugin implements IPlugin {
     name = "Ryujinx Virtual Gamepad";
     version = "7.0.0-VGAMEPAD";
-    maxPlayers = 4;
+    // Players 1-4 get Xbox 360 pads. Players 5+ get DualShock 4 pads because
+    // Windows XInput only exposes four Xbox controllers (see virtual_gamepad.py).
+    maxPlayers = readMaxPlayers();
     private pythonProcess: ChildProcess | null = null;
     private stopping = false;
 
@@ -138,4 +140,14 @@ export class RyujinxPlugin implements IPlugin {
             playerId: playerIndex
         });
     }
+}
+
+function readMaxPlayers(): number {
+    const raw = process.env.FREEJOY_MAX_PLAYERS;
+    if (!raw) return 8;
+    const value = Number(raw);
+    if (!Number.isInteger(value) || value < 1 || value > 16) {
+        throw new Error('FREEJOY_MAX_PLAYERS must be an integer between 1 and 16');
+    }
+    return value;
 }

@@ -9,7 +9,8 @@ FreeJoy turns phones and tablets into game controllers for a Windows PC, so a gr
 | Feature | What it means for players |
 | --- | --- |
 | QR-code connection | Joining does not require installing or pairing a separate mobile app. |
-| Automatic player slots | Up to four people can join without manually configuring every controller. |
+| Automatic player slots | Up to eight people (configurable to 16) can join without manually configuring every controller. |
+| Game-specific phone controllers | The host can switch every phone to a simpler layout (Party, Racing, Retro…), and games can push their own controls, AirConsole style. |
 | Virtual Xbox 360 devices | Compatible Windows games and emulators see ordinary controller inputs. |
 | Session reconnection | Refreshing the browser or waking a phone does not immediately lose the assigned player. |
 | Host controls | The person running the game can see, remove, or reset connected players from one screen. |
@@ -39,7 +40,9 @@ FreeJoy is a full-stack controller solution that turns any mobile device into a 
     *   Kick individual players (online or offline)
     *   Reset room to clear all controller leases
 *   **Persistent Sessions**: Auto-reconnect logic restores player slots if the browser refreshes or device sleeps.
-*   **Auto-Assignment**: Players are automatically assigned slots 1-4 in order of connection.
+*   **Auto-Assignment**: Players are automatically assigned slots 1-8 in order of connection. Players 1-4 get virtual Xbox 360 controllers; players 5+ get virtual DualShock 4 controllers, because Windows XInput only exposes four Xbox pads. Set `FREEJOY_MAX_PLAYERS` (1-16) to change the limit and `FREEJOY_CONTROLLER_TYPE=xbox|ds4|auto` to force a controller type.
+*   **Phone Controller Layouts (AirConsole style)**: From the host screen, switch all phones to a layout that fits the game, e.g. *Party* (big stick + A/B) for Pummel Party. Every layout still drives the virtual gamepad. Games you write can push their own layouts and receive touches directly; see the *Game socket* section of [API_CONTRACT.md](API_CONTRACT.md), the SDK in `client/public/freejoy-game.js`, and the example game linked from the host screen.
+*   **Smooth Under Load**: Stick movement is merged on the server (newest value wins) so fast thumbs never trip the input limit or disconnect a controller, and phones keep retrying the connection instead of giving up.
 *   **Kick Protection**: A kick revokes that controller lease and rotates the QR capability without interrupting other players.
 *   **Premium UI**: 
     *   Animated splash screen during connection
@@ -125,7 +128,7 @@ On PowerShell, set the same values with `$env:FREEJOY_HOST_TOKEN = "..."` and
 
 1.  **Host Screen**: Use the launcher or your configured host capability to open the QR screen
 2.  **Mobile Devices**: Scan the QR code with your phone/tablet camera
-3.  **Auto-Assignment**: Players are automatically assigned slots P1-P4
+3.  **Auto-Assignment**: Players are automatically assigned slots P1-P8 (set `FREEJOY_MAX_PLAYERS` for up to 16)
 4.  **Start Playing**: The virtual Xbox 360 controller is ready in Ryujinx!
 
 ## 📱 Player Management
@@ -169,7 +172,7 @@ The Pro Controller layout maps to Xbox 360 as follows:
 ### How It Works
 
 1.  **Connection**: Client scans QR → WebSocket connection established
-2.  **Assignment**: Server auto-assigns slot (1-4) based on availability
+2.  **Assignment**: Server auto-assigns slot (1-8 by default) based on availability
 3.  **Input Flow**: 
     - Browser captures touch events
     - Socket.IO sends to server
@@ -225,7 +228,7 @@ this.pythonProcess = spawn('python', [...], {
 ### Connection Issues
 
 *   **QR Code Not Scanning**: Ensure phone and PC are on same network
-*   **"Room Full" Error**: Maximum 4 players - use Reset Room button
+*   **"Room Full" Error**: Default maximum is 8 players - raise `FREEJOY_MAX_PLAYERS`, kick an offline player, or use Reset Room
 *   **Kicked Player Rejoining**: Use the refreshed host QR; the previous player and QR capabilities are revoked
 *   **Reconnection Fails**: Clear browser data and scan QR again
 

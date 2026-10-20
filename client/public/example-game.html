@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>FreeJoy · Orb Rush (example game)</title>
+<style>
+  html,body{margin:0;height:100%;background:#0d0f18;color:#edf2ff;font:16px system-ui,sans-serif;overflow:hidden}
+  canvas{display:block;width:100vw;height:100vh}
+  #hud{position:fixed;top:16px;left:20px;right:20px;display:flex;justify-content:space-between;align-items:flex-start;pointer-events:none}
+  #hud h1{margin:0;font-size:28px;font-style:italic;background:linear-gradient(90deg,#00d4ff,#ff4d6d);-webkit-background-clip:text;background-clip:text;color:transparent}
+  #hud p{margin:4px 0 0;color:#ffffff80;font-size:13px}
+  #scores{display:flex;flex-direction:column;gap:6px;align-items:flex-end}
+  .score{padding:4px 12px;border-radius:999px;background:#ffffff14;font-weight:700}
+  #error{position:fixed;inset:0;display:none;align-items:center;justify-content:center;text-align:center;padding:24px;background:#0d0f18}
+</style>
+</head>
+<body>
+<canvas id="arena"></canvas>
+<div id="hud">
+  <div><h1>ORB RUSH</h1><p>Example FreeJoy game · move with the stick, tap BOOST to dash, collect orbs.</p></div>
+  <div id="scores"></div>
+</div>
+<div id="error"></div>
+
+<script src="/socket.io/socket.io.js"></script>
+<script src="/freejoy-game.js"></script>
+<script>
+// This page is a complete, small example of a game that defines its own phone controller.
+const COLORS = ['#00d4ff', '#ff4d6d', '#2ecc71', '#ffc93c', '#b388ff', '#ff8a3d', '#4dd0e1', '#f06292'];
+const canvas = document.getElementById('arena');
+const context = canvas.getContext('2d');
+const players = new Map(); // playerId -> { x, y, vx, vy, stickX, stickY, score, boostUntil }
+let orbs = [];
+
+let game;
+try {
+  game = new FreeJoyGame();
+} catch (error) {
+  const box = document.getElementById('error');
+  box.style.display = 'flex';
+  box.textContent = error.message + ' Open this page from the "Open the example game" link on the FreeJoy host screen.';
+  throw error;
+}
+
+// 1. Describe the controller every phone should show.
+const CONTROLLER = {
+  name: 'Orb Rush',
+  background: '#120f22',
+  controls: [
+    { type: 'joystick', id: 'move', x: 24, y: 58, size: 62, label: 'MOVE', color: '#7c5cff' },
+    { type: 'button', id: 'boost', x: 82, y: 60, size: 40, label: 'BOOST', color: '#ff4d6d' },
+    { type: 'text', id: 'score', x: 55, y: 12, size: 7, text: '0 orbs', color: '#ffffff' }
+  ]
+};
+
+game.on('ready', data => {
+  game.setLayout(CONTROLLER);
+  data.players.filter(p => p.connected).forEach(p => addPlayer(p.playerId));
+});
+
+// 2. Track who is playing.
+game.on('playerJoined', ({ playerId }) => {
+  addPlayer(playerId);
+  game.notify('Welcome! Collect the glowing orbs.', playerId);
+});
+game.on('playerLeft', ({ playerId }) => players.delete(playerId));
+
+// 3. React to touches on the phones.
+game.on('control', event => {
+  const player = players.get(event.playerId);
+  if (!player) return;
+  if (event.id === 'move') { player.stickX = event.x; player.stickY = event.y; }
+  if (event.id === 'boost' && event.state === 1 && performance.now() > player.boostReadyAt) {
+    player.boostUntil = performance.now() + 250;
+    player.boostReadyAt = performance.now() + 1200;
+    game.updateControls({ boost: { disabled: true } }, event.playerId);
+    setTimeout(() => game.updateControls({ boost: { disabled: false } }, event.playerId), 1200);
+  }
+});
+
+function addPlayer(playerId) {
+  if (players.has(playerId)) return;
+  players.set(playerId, {
+    x: Math.random() * innerWidth, y: Math.random() * innerHeight,
+    vx: 0, vy: 0, stickX: 0, stickY: 0, score: 0, boostUntil: 0, boostReadyAt: 0
+  });
+}
+
+function spawnOrb() {
+  orbs.push({ x: 60 + Math.random() * (innerWidth - 120), y: 120 + Math.random() * (innerHeight - 180) });
+}
+
+function resize() { canvas.width = innerWidth * devicePixelRatio; canvas.height = innerHeight * devicePixelRatio; context.setTransform(devicePixelRatio, 0, 0, devicePixelRatio, 0, 0); }
+addEventListener('resize', resize); resize();
+for (let i = 0; i < 6; i += 1) spawnOrb();
+
+let last = performance.now();
+function frame(now) {
+  const dt = Math.min(0.05, (now - last) / 1000); last = now;
+  context.fillStyle = '#0d0f18'; context.fillRect(0, 0, innerWidth, innerHeight);
+
+  for (const orb of orbs) {
+    context.beginPath(); context.arc(orb.x, orb.y, 10 + Math.sin(now / 200) * 2, 0, Math.PI * 2);
+    context.fillStyle = '#ffe66d'; context.shadowColor = '#ffe66d'; context.shadowBlur = 20; context.fill();
+  }
+  context.shadowBlur = 0;
+
+  for (const [playerId, p] of players) {
+    const speed = now < p.boostUntil ? 1400 : 420;
+    p.vx += (p.stickX * speed - p.vx) * Math.min(1, dt * 10);
+    p.vy += (p.stickY * speed - p.vy) * Math.min(1, dt * 10);
+    p.x = Math.max(20, Math.min(innerWidth - 20, p.x + p.vx * dt));
+    p.y = Math.max(20, Math.min(innerHeight - 20, p.y + p.vy * dt));
+
+    orbs = orbs.filter(orb => {
+      if (Math.hypot(orb.x - p.x, orb.y - p.y) > 32) return true;
+      p.score += 1;
+      game.updateControls({ score: { text: p.score + (p.score === 1 ? ' orb' : ' orbs') } }, playerId);
+      game.vibrate(40, playerId);
+      setTimeout(spawnOrb, 400);
+      return false;
+    });
+
+    const color = COLORS[(playerId - 1) % COLORS.length];
+    context.beginPath(); context.arc(p.x, p.y, 20, 0, Math.PI * 2);
+    context.fillStyle = color; context.shadowColor = color; context.shadowBlur = now < p.boostUntil ? 40 : 14; context.fill();
+    context.shadowBlur = 0; context.fillStyle = '#0d0f18'; context.font = 'bold 14px system-ui'; context.textAlign = 'center'; context.textBaseline = 'middle';
+    context.fillText('P' + playerId, p.x, p.y);
+  }
+
+  document.getElementById('scores').innerHTML = [...players].sort((a, b) => b[1].score - a[1].score)
+    .map(([id, p]) => `<span class="score" style="color:${COLORS[(id - 1) % COLORS.length]}">P${id} · ${p.score}</span>`).join('');
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>

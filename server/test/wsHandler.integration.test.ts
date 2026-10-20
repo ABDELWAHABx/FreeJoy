@@ -92,7 +92,7 @@ async function createHarness(options: HarnessOptions = {}): Promise<Harness> {
 
 function createClient(
     harness: Harness,
-    role: 'host' | 'player',
+    role: 'host' | 'player' | 'game',
     token: string,
     capability?: 'join' | 'reconnect'
 ): Socket {
@@ -109,7 +109,7 @@ function createClient(
 
 async function connect(
     harness: Harness,
-    role: 'host' | 'player',
+    role: 'host' | 'player' | 'game',
     token: string,
     capability?: 'join' | 'reconnect'
 ): Promise<Socket> {
@@ -337,11 +337,13 @@ test('rate overflow neutralizes safely and its budget survives reconnects', asyn
 
         const second = await connect(harness, 'player', session.reconnectToken, 'reconnect');
         await join(second);
+        // Stick updates are merged state, not edges, so they never trip the ceiling.
+        second.emit('analog', { stick: 'left', x: 0.5, y: 0 });
+        await waitUntil(() => harness.plugin.analog.length === 1);
         const secondRejected = waitForEvent<{ code: string }>(second, 'operation_error');
-        second.emit('analog', { stick: 'left', x: 0, y: 0 });
+        second.emit('input', { btn: 'B', state: 1 });
         assert.equal((await secondRejected).code, 'RATE_LIMITED');
         await waitUntil(() => harness.plugin.released.length === 2);
-        assert.deepEqual(harness.plugin.analog, []);
 
         now += 1_000;
         const third = await connect(harness, 'player', session.reconnectToken, 'reconnect');
@@ -353,6 +355,115 @@ test('rate overflow neutralizes safely and its budget survives reconnects', asyn
             button: 'A',
             pressed: false
         });
+    } finally {
+        await closeHarness(harness);
+    }
+});
+
+test('a burst of stick updates is merged and never disconnects the controller', async () => {
+    const harness = await createHarness({ maximumInputEventsPerSecond: 10 });
+    try {
+        const player = await connect(harness, 'player', JOIN_TOKEN, 'join');
+        await join(player);
+        for (let index = 1; index <= 200; index += 1) {
+            player.emit('analog', { stick: 'left', x: index / 200, y: 0 });
+            player.emit('analog', { stick: 'right', x: 0, y: -index / 200 });
+        }
+        await waitUntil(() => harness.plugin.analog.some(entry => entry.stick === 'left' && entry.x === 1));
+        await waitUntil(() => harness.plugin.analog.some(entry => entry.stick === 'right' && entry.y === -1));
+        assert.ok(harness.plugin.analog.length < 400, 'stick updates should be coalesced');
+        assert.equal(harness.room.getPlayersList()[0]?.connected, true);
+        assert.deepEqual(harness.plugin.released, []);
+    } finally {
+        await closeHarness(harness);
+    }
+});
+
+test('games push layouts, receive control events and bound controls drive the gamepad', async () => {
+    const harness = await createHarness();
+    try {
+        const game = await connect(harness, 'game', HOST_TOKEN);
+        const player = await connect(harness, 'player', JOIN_TOKEN, 'join');
+        const joinedByGame = waitForEvent<{ playerId: number }>(game, 'player_joined');
+        const initialLayout = waitForEvent<{ layout: unknown }>(player, 'layout');
+        await join(player, 'Phone');
+        assert.equal((await joinedByGame).playerId, 1);
+        assert.deepEqual(await initialLayout, { layout: null });
+
+        const pushed = waitForEvent<{ layout: { name: string; controls: Array<{ id: string }> } }>(player, 'layout');
+        game.emit('set_layout', {
+            layout: {
+                name: 'Jump game',
+                controls: [
+                    { type: 'button', id: 'jump', x: 80, y: 50, size: 30, label: 'JUMP', bind: 'B' },
+                    { type: 'joystick', id: 'move', x: 20, y: 50, size: 40 },
+                    { type: 'text', id: 'score', x: 50, y: 10, size: 6, text: '0 pts' }
+                ]
+            }
+        });
+        const layout = (await pushed).layout;
+        assert.equal(layout.name, 'Jump game');
+        assert.deepEqual(layout.controls.map(control => control.id), ['jump', 'move', 'score']);
+
+        const pressed = waitForEvent<Record<string, unknown>>(game, 'control');
+        player.emit('control', { id: 'jump', state: 1 });
+        assert.deepEqual(await pressed, { playerId: 1, id: 'jump', type: 'button', state: 1 });
+        await waitUntil(() => harness.plugin.buttons.length === 1);
+        assert.deepEqual(harness.plugin.buttons[0], { player: 1, button: 'B', pressed: true });
+
+        const moved = waitForEvent<Record<string, unknown>>(game, 'control');
+        player.emit('control', { id: 'move', x: 3, y: 0.25 });
+        assert.deepEqual(await moved, { playerId: 1, id: 'move', type: 'joystick', x: 1, y: 0.25 });
+
+        // Unknown controls (e.g. from a previous layout) are ignored silently.
+        player.emit('control', { id: 'nope', state: 1 });
+
+        const updated = waitForEvent<{ updates: Record<string, { text: string }> }>(player, 'control_updates');
+        game.emit('update_controls', { updates: { score: { text: '10 pts' } } });
+        assert.equal((await updated).updates.score?.text, '10 pts');
+
+        // Closing the game hands phones back to the regular gamepad and releases held input.
+        const restored = waitForEvent<{ layout: unknown }>(player, 'layout');
+        game.disconnect();
+        assert.deepEqual(await restored, { layout: null });
+        await waitUntil(() => harness.plugin.buttons.some(entry => entry.button === 'B' && !entry.pressed));
+    } finally {
+        await closeHarness(harness);
+    }
+});
+
+test('the host can apply a preset and players cannot change layouts', async () => {
+    const harness = await createHarness();
+    try {
+        const host = await connect(harness, 'host', HOST_TOKEN);
+        const player = await connect(harness, 'player', JOIN_TOKEN, 'join');
+        await join(player);
+
+        const rejected = waitForEvent<{ code: string }>(player, 'operation_error');
+        player.emit('set_layout_preset', { presetId: 'party' });
+        assert.equal((await rejected).code, 'HOST_AUTH_REQUIRED');
+
+        const pushed = waitForEvent<{ layout: { name: string } }>(player, 'layout');
+        const state = waitForEvent<{ presetId: string }>(host, 'layout_state');
+        host.emit('set_layout_preset', { presetId: 'party' });
+        assert.equal((await pushed).layout.name, 'Party');
+        assert.equal((await state).presetId, 'party');
+
+        const invalid = waitForEvent<{ code: string }>(host, 'operation_error');
+        host.emit('set_layout', { layout: { controls: [{ type: 'button', id: 'x', x: 1, y: 1, size: 10, bind: 'Nuke' }] } });
+        assert.equal((await invalid).code, 'INVALID_LAYOUT');
+    } finally {
+        await closeHarness(harness);
+    }
+});
+
+test('players cannot connect with the game role', async () => {
+    const harness = await createHarness();
+    try {
+        const socket = createClient(harness, 'game', JOIN_TOKEN);
+        const rejected = waitForEvent<{ code: string }>(socket, 'operation_error');
+        socket.connect();
+        assert.equal((await rejected).code, 'AUTH_REQUIRED');
     } finally {
         await closeHarness(harness);
     }

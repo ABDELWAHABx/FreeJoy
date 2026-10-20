@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """
 Virtual Gamepad Controller for Ryujinx
-Uses vgamepad to create virtual Xbox 360 controllers on Windows.
+Uses vgamepad to create virtual Xbox 360 (players 1-4) and DualShock 4
+(players 5+) controllers on Windows.
 Controlled via stdin JSON messages from Node.js server.
 """
 
@@ -9,10 +10,18 @@ import os
 import sys
 import json
 import vgamepad as vg
-from typing import Dict
+from typing import Dict, Set, Union
 
-# Global controller pool (player_id -> VX360Gamepad instance)
-controllers: Dict[int, vg.VX360Gamepad] = {}
+# Global controller pool (player_id -> VX360Gamepad or VDS4Gamepad instance)
+controllers: Dict[int, Union[vg.VX360Gamepad, vg.VDS4Gamepad]] = {}
+# Held D-pad directions per DS4 player (DS4 reports the D-pad as one hat value)
+ds4_dpad: Dict[int, Set[str]] = {}
+
+# Windows XInput only exposes four Xbox controllers, so by default players 5+
+# get DualShock 4 pads, which have no such limit. Override with
+# FREEJOY_CONTROLLER_TYPE=xbox (always Xbox) or ds4 (always DualShock 4).
+CONTROLLER_TYPE = os.environ.get("FREEJOY_CONTROLLER_TYPE", "auto").strip().lower()
+XINPUT_LIMIT = 4
 
 # Button mapping: Switch Pro Controller -> Xbox 360
 BUTTON_MAP = {
@@ -36,37 +45,107 @@ BUTTON_MAP = {
     'SR': vg.XUSB_BUTTON.XUSB_GAMEPAD_GUIDE,       # Map SR to Guide button
 }
 
+# Button mapping: Switch Pro Controller -> DualShock 4 (same physical positions)
+DS4_BUTTON_MAP = {
+    'A': vg.DS4_BUTTONS.DS4_BUTTON_CIRCLE,
+    'B': vg.DS4_BUTTONS.DS4_BUTTON_CROSS,
+    'X': vg.DS4_BUTTONS.DS4_BUTTON_TRIANGLE,
+    'Y': vg.DS4_BUTTONS.DS4_BUTTON_SQUARE,
+    'L': vg.DS4_BUTTONS.DS4_BUTTON_SHOULDER_LEFT,
+    'R': vg.DS4_BUTTONS.DS4_BUTTON_SHOULDER_RIGHT,
+    'ZL': 'LEFT_TRIGGER',
+    'ZR': 'RIGHT_TRIGGER',
+    'Plus': vg.DS4_BUTTONS.DS4_BUTTON_OPTIONS,
+    'Minus': vg.DS4_BUTTONS.DS4_BUTTON_SHARE,
+    'L3': vg.DS4_BUTTONS.DS4_BUTTON_THUMB_LEFT,
+    'R3': vg.DS4_BUTTONS.DS4_BUTTON_THUMB_RIGHT,
+    'DPadUp': 'up',
+    'DPadDown': 'down',
+    'DPadLeft': 'left',
+    'DPadRight': 'right',
+    'SL': 'PS',
+    'SR': 'PS',
+}
 
-def get_or_create_controller(player_id: int) -> vg.VX360Gamepad:
+DS4_HAT = {
+    (False, False, False, False): vg.DS4_DPAD_DIRECTIONS.DS4_BUTTON_DPAD_NONE,
+    (True, False, False, False): vg.DS4_DPAD_DIRECTIONS.DS4_BUTTON_DPAD_NORTH,
+    (False, True, False, False): vg.DS4_DPAD_DIRECTIONS.DS4_BUTTON_DPAD_SOUTH,
+    (False, False, True, False): vg.DS4_DPAD_DIRECTIONS.DS4_BUTTON_DPAD_WEST,
+    (False, False, False, True): vg.DS4_DPAD_DIRECTIONS.DS4_BUTTON_DPAD_EAST,
+    (True, False, True, False): vg.DS4_DPAD_DIRECTIONS.DS4_BUTTON_DPAD_NORTHWEST,
+    (True, False, False, True): vg.DS4_DPAD_DIRECTIONS.DS4_BUTTON_DPAD_NORTHEAST,
+    (False, True, True, False): vg.DS4_DPAD_DIRECTIONS.DS4_BUTTON_DPAD_SOUTHWEST,
+    (False, True, False, True): vg.DS4_DPAD_DIRECTIONS.DS4_BUTTON_DPAD_SOUTHEAST,
+}
+
+
+def uses_ds4(player_id: int) -> bool:
+    if CONTROLLER_TYPE == "ds4":
+        return True
+    if CONTROLLER_TYPE == "xbox":
+        return False
+    return player_id > XINPUT_LIMIT
+
+
+def get_or_create_controller(player_id: int) -> Union[vg.VX360Gamepad, vg.VDS4Gamepad]:
     """Get existing controller or create new one for player."""
     if player_id not in controllers:
-        controllers[player_id] = vg.VX360Gamepad()
-        log(f"Created virtual gamepad for Player {player_id}")
+        if uses_ds4(player_id):
+            controllers[player_id] = vg.VDS4Gamepad()
+            ds4_dpad[player_id] = set()
+            log(f"Created virtual DualShock 4 for Player {player_id}")
+        else:
+            controllers[player_id] = vg.VX360Gamepad()
+            log(f"Created virtual Xbox 360 gamepad for Player {player_id}")
     return controllers[player_id]
 
 
 def handle_button(player_id: int, button: str, pressed: bool):
     """Handle button press/release."""
     gamepad = get_or_create_controller(player_id)
-    
-    if button not in BUTTON_MAP:
+    is_ds4 = isinstance(gamepad, vg.VDS4Gamepad)
+    button_map = DS4_BUTTON_MAP if is_ds4 else BUTTON_MAP
+
+    if button not in button_map:
         log(f"Unknown button: {button}")
         return
-    
-    mapping = BUTTON_MAP[button]
-    
+
+    mapping = button_map[button]
+
     # Handle triggers separately (analog 0-255)
     if mapping == 'LEFT_TRIGGER':
         gamepad.left_trigger(255 if pressed else 0)
+        if is_ds4:
+            (gamepad.press_button if pressed else gamepad.release_button)(vg.DS4_BUTTONS.DS4_BUTTON_TRIGGER_LEFT)
     elif mapping == 'RIGHT_TRIGGER':
         gamepad.right_trigger(255 if pressed else 0)
+        if is_ds4:
+            (gamepad.press_button if pressed else gamepad.release_button)(vg.DS4_BUTTONS.DS4_BUTTON_TRIGGER_RIGHT)
+    elif is_ds4 and mapping == 'PS':
+        special = vg.DS4_SPECIAL_BUTTONS.DS4_SPECIAL_BUTTON_PS
+        (gamepad.press_special_button if pressed else gamepad.release_special_button)(special)
+    elif is_ds4 and mapping in ('up', 'down', 'left', 'right'):
+        held = ds4_dpad.setdefault(player_id, set())
+        if pressed:
+            held.add(mapping)
+        else:
+            held.discard(mapping)
+        up, down = 'up' in held, 'down' in held
+        left, right = 'left' in held, 'right' in held
+        # Opposite directions cancel out, like a physical D-pad.
+        if up and down:
+            up = down = False
+        if left and right:
+            left = right = False
+        gamepad.directional_pad(direction=DS4_HAT[(up, down, left, right)])
     else:
         # Digital button
         if pressed:
             gamepad.press_button(mapping)
         else:
             gamepad.release_button(mapping)
-    
+
     gamepad.update()
     if os.environ.get("FREEJOY_DEBUG_INPUT") == "1": log(f"P{player_id} {button} {'pressed' if pressed else 'released'}")
 
@@ -79,16 +158,21 @@ def handle_analog(player_id: int, stick: str, x: float, y: float):
     # TypeScript protocol validator.
     x = max(-1.0, min(1.0, float(x)))
     y = max(-1.0, min(1.0, float(y)))
-    
-    # Convert from -1.0 to 1.0 range to -32768 to 32767 range
-    x_int = int(x * 32767)
-    y_int = int(-y * 32767)  # Invert Y axis (up is positive in vgamepad)
-    
+
+    if isinstance(gamepad, vg.VDS4Gamepad):
+        # DS4 axes are 0-255 with 128 centered and 0 = up (same as screen y).
+        x_int = max(0, min(255, round(128 + x * 127)))
+        y_int = max(0, min(255, round(128 + y * 127)))
+    else:
+        # Convert from -1.0 to 1.0 range to -32768 to 32767 range
+        x_int = int(x * 32767)
+        y_int = int(-y * 32767)  # Invert Y axis (up is positive in vgamepad)
+
     if stick == 'left':
         gamepad.left_joystick(x_value=x_int, y_value=y_int)
     elif stick == 'right':
         gamepad.right_joystick(x_value=x_int, y_value=y_int)
-    
+
     gamepad.update()
     if os.environ.get("FREEJOY_DEBUG_INPUT") == "1": log(f"P{player_id} {stick}_stick X:{x:.2f} Y:{y:.2f}")
 
@@ -101,6 +185,7 @@ def handle_disconnect(player_id: int):
         gamepad.reset()
         gamepad.update()
         del controllers[player_id]
+        ds4_dpad.pop(player_id, None)
         log(f"Removed virtual gamepad for Player {player_id}")
 
 

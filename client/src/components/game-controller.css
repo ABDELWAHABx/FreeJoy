@@ -1,0 +1,43 @@
+.game-controller{position:fixed;inset:0;overflow:hidden;color:#fff;font-family:system-ui,sans-serif;user-select:none;-webkit-user-select:none;touch-action:none;background:#12131c;
+    background-image:radial-gradient(ellipse at 20% 80%,color-mix(in srgb,var(--player) 22%,transparent),transparent 60%),radial-gradient(ellipse at 85% 15%,#ffffff12,transparent 55%)}
+.game-controller-badge{position:absolute;z-index:2;top:max(8px,env(safe-area-inset-top));left:max(10px,env(safe-area-inset-left));display:flex;align-items:center;gap:8px;font-size:12px;font-weight:700;letter-spacing:.5px;color:#ffffffb3;pointer-events:none}
+.game-controller-badge span{padding:3px 10px;border-radius:999px;background:var(--player);color:#0b0d14;font-weight:900}
+.game-controller-canvas{position:absolute;inset:max(6px,env(safe-area-inset-top)) max(8px,env(safe-area-inset-right)) max(6px,env(safe-area-inset-bottom)) max(8px,env(safe-area-inset-left))}
+.game-control{position:absolute;transform:translate(-50%,-50%);touch-action:none;contain:layout style}
+
+.game-button{width:100%;height:100%;border-radius:50%;border:0;color:#fff;font-weight:900;letter-spacing:.5px;font-size:clamp(13px,4.5vmin,34px);text-shadow:0 2px 0 #0004;
+    background:radial-gradient(circle at 35% 28%,color-mix(in srgb,var(--accent) 55%,#fff),var(--accent) 55%,color-mix(in srgb,var(--accent) 70%,#000));
+    box-shadow:0 6px 0 color-mix(in srgb,var(--accent) 45%,#000),0 12px 26px #0007,inset 0 -4px 10px #0003;
+    transition:transform 70ms ease-out,box-shadow 70ms ease-out,filter 70ms;touch-action:none;-webkit-tap-highlight-color:transparent}
+.game-button.shape-square{border-radius:22%}
+.game-button.shape-pill{border-radius:999px;font-size:clamp(11px,3vmin,18px)}
+.game-button.is-pressed{transition:none;transform:translate3d(0,5px,0) scale(.95);filter:brightness(1.18);box-shadow:0 1px 0 color-mix(in srgb,var(--accent) 45%,#000),0 0 28px color-mix(in srgb,var(--accent) 70%,transparent)}
+.game-button:disabled{filter:grayscale(.9) brightness(.55);box-shadow:0 3px 0 #0006}
+
+.game-stick{width:100%;height:100%;border-radius:50%;display:flex;align-items:center;justify-content:center;touch-action:none;
+    background:radial-gradient(circle,#ffffff10 0 38%,#0000 39%),radial-gradient(circle,color-mix(in srgb,var(--accent) 25%,#141824),#0b0e16);
+    border:3px solid color-mix(in srgb,var(--accent) 55%,transparent);box-shadow:inset 0 0 30px #000a,0 10px 30px #0006}
+.game-stick-knob{width:42%;height:42%;border-radius:50%;pointer-events:none;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:clamp(11px,3vmin,18px);
+    background:radial-gradient(circle at 35% 30%,color-mix(in srgb,var(--accent) 50%,#fff),var(--accent) 60%,color-mix(in srgb,var(--accent) 60%,#000));
+    box-shadow:0 8px 18px #0009;will-change:transform;transform:translate3d(0,0,0);transition:transform 90ms ease-out}
+.game-stick.is-held .game-stick-knob{transition:none}
+.game-stick.is-held{border-color:var(--accent)}
+.game-stick.is-disabled,.game-dpad.is-disabled{filter:grayscale(.9) brightness(.55)}
+
+.game-dpad{position:relative;width:100%;height:100%;touch-action:none}
+.dpad-arm,.dpad-center{position:absolute;background:color-mix(in srgb,var(--accent) 80%,#fff);box-shadow:0 5px 0 #0008,inset 0 -3px 6px #0004;pointer-events:none;transition:transform 60ms,filter 60ms}
+.dpad-up,.dpad-down{left:34%;width:32%;height:36%;border-radius:18% 18% 6% 6%}
+.dpad-up{top:0}.dpad-down{bottom:0;transform:rotate(180deg)}
+.dpad-left,.dpad-right{top:34%;height:32%;width:36%;border-radius:18% 6% 6% 18%}
+.dpad-left{left:0}.dpad-right{right:0;transform:rotate(180deg)}
+.dpad-center{left:33%;top:33%;width:34%;height:34%;box-shadow:none}
+.dpad-arm.is-pressed{filter:brightness(1.35) drop-shadow(0 0 10px var(--player));box-shadow:0 1px 0 #0008}
+.dpad-up.is-pressed{transform:translateY(3px)}.dpad-down.is-pressed{transform:rotate(180deg) translateY(3px)}
+.dpad-left.is-pressed{transform:translateX(3px)}.dpad-right.is-pressed{transform:rotate(180deg) translateX(3px)}
+
+.game-text{width:100%;height:100%;display:flex;align-items:center;justify-content:center;text-align:center;font-weight:800;line-height:1.1;color:var(--accent);text-shadow:0 2px 12px #0008;pointer-events:none;overflow:hidden}
+
+.freejoy-toast{position:fixed;z-index:20;left:50%;top:max(14px,env(safe-area-inset-top));transform:translateX(-50%);max-width:min(520px,86vw);padding:10px 20px;border-radius:999px;
+    background:#0b0d14e6;border:1px solid #ffffff30;color:#fff;font:700 15px system-ui,sans-serif;text-align:center;box-shadow:0 10px 30px #0008;pointer-events:none;animation:freejoy-toast-in .18s ease-out}
+@keyframes freejoy-toast-in{from{opacity:0;transform:translate(-50%,-10px)}to{opacity:1;transform:translate(-50%,0)}}
+@media(prefers-reduced-motion:reduce){.game-button,.game-stick-knob,.dpad-arm{transition:none}.freejoy-toast{animation:none}}

@@ -22,6 +22,8 @@ function App() {
     const [hostRoom, setHostRoom] = useState(null);
     const [hostToken, setHostToken] = useState(null);
     const [players, setPlayers] = useState([]);
+    const [presets, setPresets] = useState([]);
+    const [layoutState, setLayoutState] = useState(null);
 
     // Initial Routing Logic
     useEffect(() => {
@@ -81,6 +83,8 @@ function App() {
             socket.on('players_list', (list) => {
                 setPlayers(list);
             });
+            socket.on('layout_presets', (list) => setPresets(list));
+            socket.on('layout_state', (state) => setLayoutState(state));
             socket.on('operation_error', (error) => {
                 console.error('Host operation rejected', error);
             });
@@ -152,7 +156,7 @@ function App() {
                             Scan to Join (Auto-Assigned)
                         </div>
                         <p className="mt-4 text-white/50 text-sm text-center">
-                            Players will be assigned slots 1-4 automatically
+                            Players will be assigned slots 1-{hostRoom.maxPlayers} automatically
                         </p>
                     </a>
 
@@ -199,6 +203,39 @@ function App() {
                     </div>
                 </div>
 
+
+                {/* Phone controller layout (AirConsole style) */}
+                <div className="relative z-10 w-full max-w-6xl mt-10">
+                    <h2 className="text-2xl font-bold text-white/80 mb-1">Phone Controller Layout</h2>
+                    <p className="text-white/40 text-sm mb-4">
+                        Pick a simpler controller for the game you are playing. Every layout still drives the virtual gamepad.
+                        {layoutState?.owner === 'game' && <span className="text-amber-300"> A connected game is controlling the layout right now.</span>}
+                    </p>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
+                        {[{ id: null, name: 'Full Gamepad', description: 'Every button and both sticks. Players can customize it on their phone.' }, ...presets].map((preset) => {
+                            const active = (layoutState?.presetId ?? null) === preset.id && (preset.id !== null || !layoutState?.name);
+                            return (
+                                <button
+                                    key={preset.id ?? 'gamepad'}
+                                    onClick={() => {
+                                        if (!hostSocket) return;
+                                        if (preset.id === null) hostSocket.emit('clear_layout', {});
+                                        else hostSocket.emit('set_layout_preset', { presetId: preset.id });
+                                    }}
+                                    className={`text-left rounded-2xl p-4 border transition-all active:scale-95 ${active
+                                        ? 'bg-cyan-500/20 border-cyan-300 shadow-[0_0_25px_rgba(0,212,255,0.25)]'
+                                        : 'bg-white/5 border-white/10 hover:bg-white/10'}`}
+                                >
+                                    <p className="text-white font-bold">{preset.name}{active && ' ✓'}</p>
+                                    <p className="text-white/50 text-xs mt-1">{preset.description}</p>
+                                </button>
+                            );
+                        })}
+                    </div>
+                    <p className="text-white/40 text-xs mt-3">
+                        Building your own game? <a className="text-blue-300 underline" href={`/example-game.html#host=${encodeURIComponent(hostToken)}`} target="_blank" rel="noreferrer">Open the example game</a> to see how a game sends its own controls to phones.
+                    </p>
+                </div>
 
                 {/* Footer with Reset Button */}
                 <div className="relative z-10 mt-12 flex flex-col items-center gap-4">

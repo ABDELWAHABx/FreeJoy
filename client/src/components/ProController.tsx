@@ -1,5 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { EditableController } from './EditableController';
+import { GameController, applyControlUpdates } from './GameController';
+import type { ControlEvent, ControlUpdate, GameLayout } from './GameController';
+import './game-controller.css';
 
 import io, { Socket } from 'socket.io-client';
 import {
@@ -14,6 +17,10 @@ export function ProController({ roomId, joinToken }: { roomId: string; joinToken
     const [status, setStatus] = useState('connecting');
     const [playerId, setPlayerId] = useState<number | null>(null);
     const [errorMessage, setErrorMessage] = useState('The controller could not join this room.');
+    // A game (or the host preset picker) can replace the gamepad with its own layout.
+    const [gameLayout, setGameLayout] = useState<GameLayout | null>(null);
+    const [toast, setToast] = useState<string | null>(null);
+    const toastTimer = useRef<number | undefined>(undefined);
     const socket = useRef<Socket | null>(null);
     const operationFailed = useRef(false);
 
@@ -23,7 +30,9 @@ export function ProController({ roomId, joinToken }: { roomId: string; joinToken
         let reconnectToken = loadReconnectCapability(roomId);
         let usingReconnectCapability = reconnectToken !== undefined;
         const s = io(url, {
-            reconnectionAttempts: 5,
+            // Never give up: phones sleep, Wi-Fi roams, and the lease survives reconnects.
+            reconnectionAttempts: Infinity,
+            reconnectionDelayMax: 3_000,
             transports: ['websocket', 'polling'],
             tryAllTransports: true,
             auth: {
@@ -98,7 +107,26 @@ export function ProController({ roomId, joinToken }: { roomId: string; joinToken
             sendJoinRequest();
         });
 
-        s.on('joined', (data: { playerId: number; reconnectToken: string; leaseMs: number }) => {
+        s.on('layout', (data: { layout: GameLayout | null }) => {
+            setGameLayout(data?.layout ?? null);
+        });
+
+        s.on('control_updates', (data: { updates: Record<string, ControlUpdate> }) => {
+            setGameLayout(current => current && data?.updates ? applyControlUpdates(current, data.updates) : current);
+        });
+
+        s.on('notify', (data: { text: string }) => {
+            if (typeof data?.text !== 'string') return;
+            setToast(data.text);
+            window.clearTimeout(toastTimer.current);
+            toastTimer.current = window.setTimeout(() => setToast(null), 3_000);
+        });
+
+        s.on('vibrate', (data: { pattern: number[] }) => {
+            try { navigator.vibrate?.(data.pattern); } catch { /* Haptics are optional. */ }
+        });
+
+        s.on('joined', (data: { playerId: number; reconnectToken: string; leaseMs: number; maxPlayers?: number }) => {
             console.log("Pro Controller: Joined as Player", data.playerId);
             if (!saveReconnectCapability(roomId, data.reconnectToken)) {
                 operationFailed.current = true;
@@ -133,7 +161,7 @@ export function ProController({ roomId, joinToken }: { roomId: string; joinToken
         s.on('operation_error', (err: { code?: string; message?: string; retryAfterMs?: number }) => {
             console.error("Connection error:", err);
             if (err.code === 'ROOM_FULL') {
-                alert('Room is full! Maximum 4 players.');
+                alert('Room is full! Ask the host to raise FREEJOY_MAX_PLAYERS or kick an offline player.');
                 window.location.href = '/';
             } else if (err.code === 'IDENTITY_BUSY') {
                 setStatus('connecting');
@@ -156,6 +184,7 @@ export function ProController({ roomId, joinToken }: { roomId: string; joinToken
         return () => {
             retryScheduler.cancel();
             stopHeartbeat();
+            window.clearTimeout(toastTimer.current);
             s.disconnect();
         };
     }, [joinToken, roomId]);
@@ -171,6 +200,12 @@ export function ProController({ roomId, joinToken }: { roomId: string; joinToken
     const sendAnalog = (stick: 'left' | 'right', x: number, y: number) => {
         if (socket.current && socket.current.connected) {
             socket.current.emit('analog', { stick, x, y });
+        }
+    };
+
+    const sendControl = (event: ControlEvent) => {
+        if (socket.current && socket.current.connected) {
+            socket.current.emit('control', event);
         }
     };
 
@@ -228,5 +263,10 @@ export function ProController({ roomId, joinToken }: { roomId: string; joinToken
         );
     }
 
-    return <EditableController playerId={playerId} sendInput={sendInput} sendAnalog={sendAnalog} />;
+    return <>
+        {gameLayout
+            ? <GameController key={JSON.stringify(gameLayout.controls.map(control => control.id))} playerId={playerId} layout={gameLayout} send={sendControl} />
+            : <EditableController playerId={playerId} sendInput={sendInput} sendAnalog={sendAnalog} />}
+        {toast && <div className="freejoy-toast" role="status">{toast}</div>}
+    </>;
 }

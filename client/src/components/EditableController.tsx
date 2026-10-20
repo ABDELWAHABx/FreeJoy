@@ -32,7 +32,8 @@ export function EditableController(props:Props){
         if(previous===0&&next>0)latest.current.sendInput(action,1);
         if(previous>0&&next===0)latest.current.sendInput(action,0);
     };
-    const neutral=()=>{setInputEpoch(n=>n+1);heldActions.current.clear();Object.keys(actions).forEach(a=>latest.current.sendInput(a,0));latest.current.sendAnalog('left',0,0);latest.current.sendAnalog('right',0,0);};
+    // Release only what is held: blindly releasing every button flooded the server's input ceiling.
+    const neutral=()=>{setInputEpoch(n=>n+1);const held=[...heldActions.current].filter(([,count])=>count>0).map(([a])=>a);heldActions.current.clear();held.forEach(a=>latest.current.sendInput(a,0));latest.current.sendAnalog('left',0,0);latest.current.sendAnalog('right',0,0);};
     useEffect(()=>{
         const el=canvas.current;if(!el)return;
         const measure=()=>{const width=el.clientWidth,height=el.clientHeight;if(width>0&&height>0)setBounds(old=>old.width===width&&old.height===height?old:{width,height});};
