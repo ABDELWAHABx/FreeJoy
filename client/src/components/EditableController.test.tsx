@@ -53,7 +53,7 @@ it('paints presses immediately and flushes the last stick movement without repla
  pointer(button,'pointerup');expect(button.classList.contains('is-pressed')).toBe(false);
  pointer(stick,'pointerdown');expect(analog).toHaveBeenLastCalledWith('left',0,0);
  now=5;pointer(stick,'pointermove',66,50);expect(stick.querySelector<HTMLElement>('.stick-knob')!.style.transform).toContain('16px');
- now=16;act(()=>vi.advanceTimersByTime(16));expect(analog).toHaveBeenLastCalledWith('left',.5,0);
+ now=16;act(()=>vi.advanceTimersByTime(16));expect(analog).toHaveBeenLastCalledWith('left',.468,0);
  now=20;pointer(stick,'pointermove',82,50);pointer(stick,'pointerup');expect(analog).toHaveBeenLastCalledWith('left',0,0);
  const count=analog.mock.calls.length;act(()=>vi.advanceTimersByTime(100));expect(analog).toHaveBeenCalledTimes(count);
  act(()=>root.unmount());div.remove();vi.restoreAllMocks();vi.useRealTimers();vi.unstubAllGlobals();

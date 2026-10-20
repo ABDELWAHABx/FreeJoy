@@ -465,6 +465,14 @@ export class WSHandler {
             this.broadcastPlayerList();
         });
 
+        // Tiny packets that keep the phone's Wi-Fi radio awake; they also count as activity.
+        socket.on('k', () => this.room.handlePing(socket.id));
+
+        // Round-trip probe for the phone's connection-quality dot.
+        socket.on('latency', (ack: unknown) => {
+            if (typeof ack === 'function') ack();
+        });
+
         socket.on('ping', () => {
             this.room.handlePing(socket.id);
             socket.emit('pong');

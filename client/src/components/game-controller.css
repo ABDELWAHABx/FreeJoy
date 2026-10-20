@@ -55,3 +55,10 @@
 .type-option.is-ds4{background:linear-gradient(160deg,#2f5dd8cc,#14286acc)}
 .type-glyphs{font-size:20px;font-weight:800;letter-spacing:3px;opacity:.9}
 .controller-menu label select:disabled{opacity:.5}
+
+/* Connection quality dot (top right) */
+.connection-dot{position:fixed;z-index:8;top:max(8px,env(safe-area-inset-top));right:max(10px,env(safe-area-inset-right));display:flex;align-items:center;gap:6px;font:700 11px system-ui,sans-serif;color:#ffb3b3;pointer-events:none}
+.connection-dot span{width:9px;height:9px;border-radius:50%;box-shadow:0 0 8px currentColor}
+.connection-dot.is-good span{background:#2ecc71;color:#2ecc71}
+.connection-dot.is-fair span{background:#ffc93c;color:#ffc93c}
+.connection-dot.is-poor span{background:#ff4d6d;color:#ff4d6d}

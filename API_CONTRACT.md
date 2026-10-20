@@ -53,6 +53,8 @@ Reconnect handshake auth:
 - `analog { stick, x, y }`
 - `control { id, state }` / `control { id, x, y }` / `control { id, direction, state }` for game-defined layouts
 - `ping`
+- `k` (volatile keepalive about every 100 ms while visible; counts as activity)
+- `latency` with an acknowledgement callback (round-trip probe for the phone's connection dot)
 
 The room ID is eight hexadecimal characters. Device names contain at most 80 display characters. The server issues a 256-bit reconnect capability, stores only its digest, and never exposes it to the host or another controller. Buttons are allow-listed, state is exactly `0` or `1`, analog values must be finite and are clamped to `[-1, 1]`. Button presses (`input`, and button/d-pad `control` events) share a configurable per-controller rate ceiling whose state survives reconnects. Exceeding it neutralizes and disconnects the controller instead of dropping a potentially safety-critical release event; a release for a button that is not held is harmless and is dropped instead. Stick updates (`analog`, joystick `control`) are state rather than edges: the server keeps only the newest value per stick and forwards it at most every 8 ms, and they never count toward the ceiling.
 

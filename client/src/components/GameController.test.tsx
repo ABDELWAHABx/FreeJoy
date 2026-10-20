@@ -47,3 +47,32 @@ it('applies live control updates from the game', () => {
     expect(next.controls[1]).toMatchObject({ text: '10 pts' });
     expect(next.controls[0]).toMatchObject({ disabled: true });
 });
+
+it('slides a held finger from one button to the next without lifting', () => {
+    vi.stubGlobal('ResizeObserver', class { observe() {} disconnect() {} });
+    vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
+    const div = document.createElement('div'); document.body.append(div);
+    const root = createRoot(div), send = vi.fn();
+    const twoButtons: GameLayout = { name: 'Two', controls: [
+        { type: 'button', id: 'a', x: 70, y: 50, size: 20, label: 'A' },
+        { type: 'button', id: 'b', x: 90, y: 50, size: 20, label: 'B' }
+    ] };
+    act(() => root.render(<GameController playerId={1} layout={twoButtons} send={send} />));
+    const a = div.querySelector<HTMLButtonElement>('button[aria-label="A"]')!;
+    const b = div.querySelector<HTMLButtonElement>('button[aria-label="B"]')!;
+    let under: Element = a;
+    document.elementFromPoint = () => under;
+    const pointer = (type: string) => {
+        const event = new MouseEvent(type, { bubbles: true });
+        Object.defineProperty(event, 'pointerId', { value: 3 });
+        act(() => a.dispatchEvent(event));   // the first-touched button keeps the capture
+    };
+    pointer('pointerdown');
+    under = b; pointer('pointermove');
+    pointer('pointerup');
+    expect(send.mock.calls.map(call => call[0])).toEqual([
+        { id: 'a', state: 1 }, { id: 'a', state: 0 }, { id: 'b', state: 1 }, { id: 'b', state: 0 }
+    ]);
+    expect(b.classList.contains('is-pressed')).toBe(false);
+    act(() => root.unmount()); div.remove(); vi.unstubAllGlobals();
+});

@@ -3,6 +3,8 @@ import type { CSSProperties, PointerEvent as ReactPointerEvent } from 'react';
 import { readStick, stickChanged, STICK_MIN_GAP_MS } from '../stickMath';
 import type { StickGeometry, StickValue } from '../stickMath';
 import { ControllerTypeSetting } from './ControllerTypeSetting';
+import { FeelSettingsMenu } from './FeelSettingsMenu';
+import { getFeel, haptic, stickOrigin, useSlideButton } from '../feel';
 import type { ControllerType } from './ControllerTypeSetting';
 import './editable-controller.css';
 import './game-controller.css';
@@ -97,6 +99,7 @@ export function GameController({ playerId, layout, send, controllerType, control
             <strong>Player {playerId}</strong>
             <button onClick={() => { setMenu(false); document.documentElement.requestFullscreen?.().catch(() => setMenu(true)); }}>Fullscreen</button>
             {controllerType && onControllerTypeChange && <ControllerTypeSetting value={controllerType} locked={controllerTypeLocked} onChange={onControllerTypeChange} />}
+            <FeelSettingsMenu />
             <small>The game chose this layout. It switches back to the full gamepad when the game closes.</small>
             <button onClick={() => setMenu(false)}>Close menu</button>
         </section>}
@@ -120,41 +123,19 @@ export function GameController({ playerId, layout, send, controllerType, control
     </div>;
 }
 
-function haptic(ms = 12) {
-    try { navigator.vibrate?.(ms); } catch { /* Haptics are optional. */ }
-}
-
 type Emit = (event: ControlEvent) => void;
 
 function GameButton({ control, emit }: { control: Extract<LayoutControl, { type: 'button' }>; emit: Emit }) {
-    const pointers = useRef(new Set<number>());
-    const latest = useRef({ id: control.id, emit });
-    latest.current = { id: control.id, emit };
-    useEffect(() => () => {
-        if (pointers.current.size > 0) latest.current.emit({ id: latest.current.id, state: 0 });
-    }, []);
-    const end = (event: ReactPointerEvent<HTMLButtonElement>) => {
-        if (pointers.current.delete(event.pointerId) && pointers.current.size === 0) {
-            event.currentTarget.classList.remove('is-pressed');
-            emit({ id: control.id, state: 0 });
-        }
-    };
+    const { ref, handlers } = useSlideButton<HTMLButtonElement>(
+        () => emit({ id: control.id, state: 1 }),
+        () => emit({ id: control.id, state: 0 })
+    );
     return <button
+        ref={ref}
         className={`game-button shape-${control.shape ?? 'circle'}`}
         disabled={control.disabled}
         aria-label={control.label || control.id}
-        onPointerDown={event => {
-            event.preventDefault();
-            event.currentTarget.setPointerCapture?.(event.pointerId);
-            if (pointers.current.size === 0) {
-                // Paint locally without waiting for a React render.
-                event.currentTarget.classList.add('is-pressed');
-                haptic();
-                emit({ id: control.id, state: 1 });
-            }
-            pointers.current.add(event.pointerId);
-        }}
-        onPointerUp={end} onPointerCancel={end} onLostPointerCapture={end}
+        {...handlers}
     >{control.label}</button>;
 }
 
@@ -184,8 +165,9 @@ function GameStick({ control, emit }: { control: Extract<LayoutControl, { type: 
 
     const move = (event: ReactPointerEvent<HTMLDivElement>, force = false) => {
         if (pointer.current !== event.pointerId) return;
-        const value = readStick(geometry.current, event.clientX, event.clientY), radius = geometry.current.radius;
-        if (knob.current) knob.current.style.transform = `translate3d(${value.x * radius}px,${value.y * radius}px,0)`;
+        const reading = readStick(geometry.current, event.clientX, event.clientY), radius = geometry.current.radius;
+        const value = { x: reading.x, y: reading.y };
+        if (knob.current) knob.current.style.transform = `translate3d(${reading.knobX * radius}px,${reading.knobY * radius}px,0)`;
         // Send on meaningful change, immediately; only very fast bursts are merged.
         if (!force && !stickChanged(value, lastSent.current)) { pending.current = null; return; }
         pending.current = value;
@@ -198,6 +180,7 @@ function GameStick({ control, emit }: { control: Extract<LayoutControl, { type: 
         pointer.current = null;
         cancel();
         event.currentTarget.classList.remove('is-held');
+        event.currentTarget.style.translate = '';
         if (knob.current) knob.current.style.transform = 'translate3d(0,0,0)';
         lastSent.current = { x: 0, y: 0 };
         emit({ id: control.id, x: 0, y: 0 });
@@ -209,8 +192,7 @@ function GameStick({ control, emit }: { control: Extract<LayoutControl, { type: 
         onPointerDown={event => {
             if (pointer.current !== null || control.disabled) return;
             event.preventDefault();
-            const box = event.currentTarget.getBoundingClientRect();
-            geometry.current = { x: box.left + box.width / 2, y: box.top + box.height / 2, radius: box.width * 0.32 };
+            geometry.current = stickOrigin(event.currentTarget, event.clientX, event.clientY, getFeel().stickStyle === 'floating');
             pointer.current = event.pointerId;
             event.currentTarget.setPointerCapture?.(event.pointerId);
             event.currentTarget.classList.add('is-held');

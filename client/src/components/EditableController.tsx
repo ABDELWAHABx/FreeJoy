@@ -6,6 +6,8 @@ import {readStick,stickChanged,STICK_MIN_GAP_MS} from '../stickMath';
 import type {StickGeometry,StickValue} from '../stickMath';
 import {ControllerTypeSetting} from './ControllerTypeSetting';
 import type {ControllerType} from './ControllerTypeSetting';
+import {getFeel,haptic,stickOrigin,useSlideButton} from '../feel';
+import {FeelSettingsMenu} from './FeelSettingsMenu';
 import './editable-controller.css';
 
 type Props={playerId:number;sendInput:(button:string,state:0|1)=>void;sendAnalog:(stick:'left'|'right',x:number,y:number)=>void;
@@ -68,6 +70,7 @@ export function EditableController(props:Props){
             {menu&&<section className="controller-menu" aria-label="Controller settings">
                 <strong>Player {props.playerId}</strong><button onClick={beginEdit}>Edit layout</button><button onClick={fullscreen}>Fullscreen</button>
                 {props.controllerType&&props.onControllerTypeChange&&<ControllerTypeSetting value={props.controllerType} locked={props.controllerTypeLocked} onChange={props.onControllerTypeChange}/>}
+                <FeelSettingsMenu/>
                 <label>Phone symbols <select aria-label="Phone symbols" value={symbols} onChange={e=>{const value=e.target.value==='playstation'?'playstation':'xbox';setSymbols(value);try{localStorage.setItem('freejoy:symbols',value);}catch{setMessage('Symbols changed for this session only.');}}}><option value="xbox">Xbox · A B X Y</option><option value="playstation">PlayStation · × ○ □ △</option></select></label>
                 <small>Phone symbols only change the labels. "Controller type" decides what the PC sees.</small>
                 <small>For an app shortcut, use your browser's Add to home screen. Fullscreen works without installation. App installation availability depends on your browser and a secure connection.</small>
@@ -98,15 +101,8 @@ export function EditableController(props:Props){
     </div>;
 }
 function PadButton({action,label,send}:{action:Action;label:string;send:Props['sendInput']}){
-    const pointers=useRef(new Set<number>());
-    const end=(e:ReactPointerEvent<HTMLButtonElement>)=>{
-        if(pointers.current.delete(e.pointerId)&&pointers.current.size===0){send(action,0);e.currentTarget.classList.remove('is-pressed');}
-    };
-    return <button className={'pad-button action-'+actions[action]} aria-label={label} onPointerDown={e=>{
-        e.preventDefault();e.currentTarget.setPointerCapture(e.pointerId);
-        e.currentTarget.classList.add('is-pressed');
-        if(pointers.current.size===0)send(action,1);pointers.current.add(e.pointerId);
-    }} onPointerUp={end} onPointerCancel={end} onLostPointerCapture={end}>{label}</button>;
+    const {ref,handlers}=useSlideButton<HTMLButtonElement>(()=>send(action,1),()=>send(action,0));
+    return <button ref={ref} className={'pad-button action-'+actions[action]} aria-label={label} {...handlers}>{label}</button>;
 }
 function PadStick({stick,send}:{stick:'left'|'right';send:Props['sendAnalog']}){
     const pointer=useRef<number|null>(null),knob=useRef<HTMLDivElement>(null);
@@ -118,23 +114,23 @@ function PadStick({stick,send}:{stick:'left'|'right';send:Props['sendAnalog']}){
     useEffect(()=>()=>{cancel();if(pointer.current!==null)latestSend.current(stick,0,0);},[stick]);
     const move=(e:ReactPointerEvent<HTMLDivElement>,force=false)=>{
         if(pointer.current!==e.pointerId)return;
-        const value=readStick(geometry.current,e.clientX,e.clientY),radius=geometry.current.radius;
+        const reading=readStick(geometry.current,e.clientX,e.clientY),radius=geometry.current.radius,value={x:reading.x,y:reading.y};
         // Paint locally without a React render or a network round trip.
-        if(knob.current)knob.current.style.transform=`translate3d(${value.x*radius}px,${value.y*radius}px,0)`;
+        if(knob.current)knob.current.style.transform=`translate3d(${reading.knobX*radius}px,${reading.knobY*radius}px,0)`;
         if(!force&&!stickChanged(value,sent.current)){pending.current=null;return;}
         pending.current=value;const remaining=STICK_MIN_GAP_MS-(performance.now()-last.current);
         if(force||remaining<=0){if(timer.current!==null)clearTimeout(timer.current);flush();}
         else if(timer.current===null)timer.current=setTimeout(flush,remaining);
     };
     const end=(e:ReactPointerEvent<HTMLDivElement>)=>{if(pointer.current===e.pointerId){
-        pointer.current=null;cancel();e.currentTarget.classList.remove('is-held');
+        pointer.current=null;cancel();e.currentTarget.classList.remove('is-held');e.currentTarget.style.translate='';
         if(knob.current)knob.current.style.transform='translate3d(0,0,0)';
         sent.current={x:0,y:0};latestSend.current(stick,0,0);
     }};
     return <div className="pad-stick" role="slider" aria-label={stick+' stick'} aria-valuemin={-1} aria-valuemax={1} aria-valuenow={0}
-        onPointerDown={e=>{if(pointer.current!==null)return;e.preventDefault();const box=e.currentTarget.getBoundingClientRect();
-            geometry.current={x:box.left+box.width/2,y:box.top+box.height/2,radius:box.width*.32};
-            pointer.current=e.pointerId;e.currentTarget.setPointerCapture(e.pointerId);e.currentTarget.classList.add('is-held');move(e,true);
+        onPointerDown={e=>{if(pointer.current!==null)return;e.preventDefault();
+            geometry.current=stickOrigin(e.currentTarget,e.clientX,e.clientY,getFeel().stickStyle==='floating');
+            pointer.current=e.pointerId;e.currentTarget.setPointerCapture(e.pointerId);e.currentTarget.classList.add('is-held');haptic(8);move(e,true);
         }} onPointerMove={e=>move(e)} onPointerUp={end} onPointerCancel={end} onLostPointerCapture={end}>
         <div ref={knob} className="stick-knob">{stick==='left'?'L':'R'}</div>
     </div>;

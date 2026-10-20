@@ -3,6 +3,7 @@ import { EditableController } from './EditableController';
 import { GameController, applyControlUpdates } from './GameController';
 import type { ControlEvent, ControlUpdate, GameLayout } from './GameController';
 import type { ControllerType } from './ControllerTypeSetting';
+import { useScreenWakeLock } from '../feel';
 import './game-controller.css';
 
 const CONTROLLER_TYPE_KEY = 'freejoy:controller-type';
@@ -38,6 +39,8 @@ export function ProController({ roomId, joinToken }: { roomId: string; joinToken
     const [gameLayout, setGameLayout] = useState<GameLayout | null>(null);
     const [toast, setToast] = useState<string | null>(null);
     const toastTimer = useRef<number | undefined>(undefined);
+    const [latencyMs, setLatencyMs] = useState<number | null>(null);
+    useScreenWakeLock(status === 'connected');
     // Xbox or PlayStation: chosen once on this phone, changeable in the ⋯ menu.
     const [controllerType, setControllerType] = useState<ControllerType | null>(loadControllerType);
     const [controllerTypeForced, setControllerTypeForced] = useState(false);
@@ -82,15 +85,35 @@ export function ProController({ roomId, joinToken }: { roomId: string; joinToken
         };
         requestJoin.current = sendJoinRequest;
         const retryScheduler = new JoinRetryScheduler(sendJoinRequest);
+        let keepAliveTimer: number | undefined;
+        let latencyTimer: number | undefined;
         const stopHeartbeat = () => {
             if (heartbeatTimer !== undefined) window.clearInterval(heartbeatTimer);
             heartbeatTimer = undefined;
+            window.clearInterval(keepAliveTimer);
+            window.clearInterval(latencyTimer);
+            keepAliveTimer = latencyTimer = undefined;
+            setLatencyMs(null);
         };
         const startHeartbeat = (leaseMs: number) => {
             stopHeartbeat();
             heartbeatTimer = window.setInterval(() => {
                 if (s.connected) s.emit('ping');
             }, heartbeatIntervalFor(leaseMs));
+            // Phones' Wi-Fi naps between packets and then holds the first press
+            // for 50-200 ms. A tiny packet every 100 ms keeps the radio awake while
+            // the controller is on screen. Volatile: dropped, never queued.
+            keepAliveTimer = window.setInterval(() => {
+                if (s.connected && document.visibilityState === 'visible') (s.volatile ?? s).emit('k');
+            }, 100);
+            // Round-trip time for the connection dot (AirConsole shows a similar "slow connection" state).
+            const measure = () => {
+                if (!s.connected || typeof s.timeout !== 'function') return;
+                const sentAt = performance.now();
+                s.timeout(2_000).emit('latency', (error: unknown) => setLatencyMs(error ? 2_000 : Math.round(performance.now() - sentAt)));
+            };
+            measure();
+            latencyTimer = window.setInterval(measure, 2_000);
         };
         const reconnectWithJoinCapability = () => {
             reconnectToken = undefined;
@@ -253,10 +276,13 @@ export function ProController({ roomId, joinToken }: { roomId: string; joinToken
         }
     };
 
+    // Stick moves are volatile: on a congested link a stale position is dropped
+    // instead of queuing up behind newer ones. Returning to center is always
+    // delivered, so a stick can never stay stuck.
     const sendAnalog = (stick: 'left' | 'right', x: number, y: number) => {
-        if (socket.current && socket.current.connected) {
-            socket.current.emit('analog', { stick, x, y });
-        }
+        const s = socket.current;
+        if (!s || !s.connected) return;
+        (x === 0 && y === 0 ? s : (s.volatile ?? s)).emit('analog', { stick, x, y });
     };
 
     const chooseControllerType = (value: ControllerType) => {
@@ -268,9 +294,10 @@ export function ProController({ roomId, joinToken }: { roomId: string; joinToken
     };
 
     const sendControl = (event: ControlEvent) => {
-        if (socket.current && socket.current.connected) {
-            socket.current.emit('control', event);
-        }
+        const s = socket.current;
+        if (!s || !s.connected) return;
+        const staleable = 'x' in event && (event.x !== 0 || event.y !== 0);
+        (staleable ? (s.volatile ?? s) : s).emit('control', event);
     };
 
     // Prevent context menu
@@ -351,6 +378,7 @@ export function ProController({ roomId, joinToken }: { roomId: string; joinToken
             : <EditableController playerId={playerId} sendInput={sendInput} sendAnalog={sendAnalog}
                 controllerType={controllerType} controllerTypeLocked={controllerTypeForced} onControllerTypeChange={chooseControllerType} />}
         {toast && <div className="freejoy-toast" role="status">{toast}</div>}
+        <ConnectionDot latencyMs={latencyMs} />
     </>;
 }
 /** First-run choice: which controller the PC should see for this phone. */
@@ -370,5 +398,15 @@ function ControllerTypePicker({ onChoose }: { onChoose: (value: ControllerType) 
                 <small>For games that prefer PlayStation, or player 5 and up.</small>
             </button>
         </div>
+    </div>;
+}
+
+/** Small Wi-Fi quality indicator: green is great, yellow is OK, red means expect lag. */
+function ConnectionDot({ latencyMs }: { latencyMs: number | null }) {
+    if (latencyMs === null) return null;
+    const quality = latencyMs < 40 ? 'good' : latencyMs < 100 ? 'fair' : 'poor';
+    return <div className={`connection-dot is-${quality}`} role="status"
+        aria-label={`Connection ${quality}, ${latencyMs} milliseconds`} title={`${latencyMs} ms`}>
+        <span />{quality === 'poor' && 'Weak Wi-Fi'}
     </div>;
 }

@@ -573,3 +573,20 @@ test('players choose Xbox or PlayStation and can switch from the phone', async (
         await closeHarness(harness);
     }
 });
+
+test('keepalive packets refresh the lease and the latency probe answers', async () => {
+    let now = 1_000;
+    const harness = await createHarness({ now: () => now, staleTimeoutMs: 5_000 });
+    try {
+        const player = await connect(harness, 'player', JOIN_TOKEN, 'join');
+        await join(player);
+        now += 4_000;
+        player.emit('k');
+        await player.timeout(2_000).emitWithAck('latency');
+        now += 4_000;  // 8 s after join, but only 4 s after the keepalive
+        harness.handler.cleanupStalePlayers();
+        assert.equal(harness.room.getPlayersList()[0]?.connected, true);
+    } finally {
+        await closeHarness(harness);
+    }
+});
