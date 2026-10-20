@@ -21,9 +21,13 @@ export const SUPPORTED_BUTTONS = [
 
 export type SupportedButton = typeof SUPPORTED_BUTTONS[number];
 
+export const CONTROLLER_TYPES = ['xbox', 'ds4'] as const;
+export type ControllerType = typeof CONTROLLER_TYPES[number];
+
 export type JoinRequest = {
     roomId: string;
     deviceName?: string;
+    controllerType?: ControllerType;
 };
 
 export type ButtonRequest = {
@@ -49,13 +53,22 @@ const CONTROL_CHARACTERS = /[\u0000-\u001F\u007F]/gu;
 
 export function parseJoinRequest(value: unknown): JoinRequest | undefined {
     if (!isRecord(value)) return undefined;
-    if (Object.keys(value).some(key => key !== 'roomId' && key !== 'deviceName')) return undefined;
+    if (Object.keys(value).some(key => key !== 'roomId' && key !== 'deviceName' && key !== 'controllerType')) return undefined;
     const roomId = typeof value.roomId === 'string' ? value.roomId.trim().toUpperCase() : '';
     if (!ROOM_ID_PATTERN.test(roomId)) return undefined;
 
     const deviceName = sanitizeDeviceName(value.deviceName);
     if (value.deviceName !== undefined && deviceName === undefined) return undefined;
-    return deviceName ? { roomId, deviceName } : { roomId };
+    const controllerType = parseControllerType(value.controllerType);
+    if (value.controllerType !== undefined && controllerType === undefined) return undefined;
+    const request: JoinRequest = { roomId };
+    if (deviceName) request.deviceName = deviceName;
+    if (controllerType) request.controllerType = controllerType;
+    return request;
+}
+
+export function parseControllerType(value: unknown): ControllerType | undefined {
+    return value === 'xbox' || value === 'ds4' ? value : undefined;
 }
 
 export function parseButtonRequest(value: unknown): ButtonRequest | undefined {

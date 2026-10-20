@@ -51,6 +51,7 @@ describe('ProController lease recovery', () => {
         socketHarness.socket.disconnect.mockReset();
         socketHarness.socket.emit.mockReset();
         window.localStorage.clear();
+        window.localStorage.setItem('freejoy:controller-type', 'xbox');
         vi.spyOn(window, 'prompt').mockImplementation(() => { throw new Error('Dialogs unavailable'); });
         container = document.createElement('div');
         document.body.appendChild(container);
@@ -92,7 +93,8 @@ describe('ProController lease recovery', () => {
         expect(socketHarness.socket.emit).toHaveBeenCalledTimes(1);
         expect(socketHarness.socket.emit).toHaveBeenLastCalledWith('join', {
             roomId: 'ABCDEF12',
-            deviceName: 'Unknown Device'
+            deviceName: 'Unknown Device',
+            controllerType: 'xbox'
         });
         expect(window.prompt).not.toHaveBeenCalled();
 
@@ -110,5 +112,18 @@ describe('ProController lease recovery', () => {
         expect(window.localStorage.getItem('freejoy:reconnect-capability')).toContain(
             'a'.repeat(43)
         );
+    });
+    it('asks Xbox or PlayStation before joining and remembers the choice', async () => {
+        window.localStorage.removeItem('freejoy:controller-type');
+        await act(async () => {
+            root.render(<ProController roomId="ABCDEF12" joinToken="join-capability-123456" />);
+        });
+        await act(async () => deliver('connect'));
+        expect(socketHarness.socket.emit).not.toHaveBeenCalledWith('join', expect.anything());
+        const playstation = Array.from(container.querySelectorAll('button')).find(button => button.textContent?.includes('PlayStation'))!;
+        await act(async () => playstation.click());
+        expect(socketHarness.socket.emit).toHaveBeenLastCalledWith('join', expect.objectContaining({ controllerType: 'ds4' }));
+        expect(window.localStorage.getItem('freejoy:controller-type')).toBe('ds4');
+        expect(window.localStorage.getItem('freejoy:symbols')).toBe('playstation');
     });
 });

@@ -6,6 +6,15 @@ import path from 'path';
 import { rateLimit } from 'express-rate-limit';
 import { Server } from 'socket.io';
 import { CapabilityAuthority, loadCapabilityConfig } from './authority';
+import {
+    DEVICE_COOKIE,
+    DEVICE_COOKIE_MAX_AGE_SECONDS,
+    DeviceRegistry,
+    createDeviceCookieValue,
+    defaultDeviceRegistryFile,
+    readDeviceCookie
+} from './deviceRegistry';
+import { parseControllerType } from './protocol';
 import { RyujinxPlugin } from './plugins/RyujinxPlugin';
 import { RoomManager } from './roomManager';
 import { HostRoomState } from './types';
@@ -44,7 +53,11 @@ export async function bootstrap(): Promise<void> {
             methods: ['GET', 'POST']
         }
     });
+    const forcedControllerType = readForcedControllerType();
+    const deviceRegistry = new DeviceRegistry(defaultDeviceRegistryFile());
     const wsHandler = new WSHandler(io, roomManager, plugin, authority, {
+        deviceRegistry,
+        forcedControllerType,
         cleanupIntervalMs,
         staleTimeoutMs: controllerLeaseMs,
         maximumInputEventsPerSecond: parseIntegerSetting(
@@ -71,6 +84,19 @@ export async function bootstrap(): Promise<void> {
         limit: 120,
         standardHeaders: 'draft-8',
         legacyHeaders: false
+    });
+    // Every phone gets a long-lived cookie so it keeps its player number across
+    // disconnects and server restarts. It is HttpOnly: page scripts never see it.
+    app.use((request, response, next) => {
+        if (request.method === 'GET' && request.path === '/pad' && !readDeviceCookie(request.headers.cookie)) {
+            response.cookie(DEVICE_COOKIE, createDeviceCookieValue(), {
+                maxAge: DEVICE_COOKIE_MAX_AGE_SECONDS * 1_000,
+                httpOnly: true,
+                sameSite: 'lax',
+                path: '/'
+            });
+        }
+        next();
     });
     app.use(express.static(clientPath));
 
@@ -145,6 +171,14 @@ export async function bootstrap(): Promise<void> {
 
     process.once('SIGINT', () => void shutdown('SIGINT'));
     process.once('SIGTERM', () => void shutdown('SIGTERM'));
+}
+
+function readForcedControllerType() {
+    const raw = (process.env.FREEJOY_CONTROLLER_TYPE ?? 'auto').trim().toLowerCase();
+    if (raw === 'auto' || raw === '') return undefined;
+    const type = parseControllerType(raw);
+    if (!type) throw new Error('FREEJOY_CONTROLLER_TYPE must be auto, xbox or ds4');
+    return type;
 }
 
 function readBearerToken(request: Request): string | undefined {

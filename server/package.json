@@ -14,7 +14,7 @@
         "prod": "node dist/server.js",
         "prepack": "npm run build:client && npm run build",
         "package:smoke": "node scripts/package-smoke.mjs",
-        "test": "tsx --test test/authority.test.ts test/protocol.test.ts test/roomManager.test.ts test/wsHandler.integration.test.ts test/gameLayout.test.ts"
+        "test": "tsx --test test/authority.test.ts test/protocol.test.ts test/roomManager.test.ts test/wsHandler.integration.test.ts test/gameLayout.test.ts test/deviceRegistry.test.ts"
     },
     "dependencies": {
         "cors": "^2.8.5",

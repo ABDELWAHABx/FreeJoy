@@ -1,5 +1,6 @@
 import { Server, Socket } from 'socket.io';
 import { CapabilityAuthority } from './authority';
+import { DeviceRegistry, deviceKeyFor, readDeviceCookie } from './deviceRegistry';
 import {
     ControlEvent,
     ControlUpdate,
@@ -14,11 +15,14 @@ import {
 } from './gameLayout';
 import { IPlugin } from './plugins/IPlugin';
 import {
+    ControllerType,
     FixedWindowRateLimiter,
+    JoinRequest,
     OperationError,
     SupportedButton,
     parseAnalogRequest,
     parseButtonRequest,
+    parseControllerType,
     parseJoinRequest,
     parsePlayerId
 } from './protocol';
@@ -31,6 +35,10 @@ export type WSHandlerOptions = {
     maximumInputEventsPerSecond?: number;
     /** Analog (stick) updates are merged and forwarded at most once per this interval. */
     analogFlushMs?: number;
+    /** Remembers each phone's slot and controller type (in memory when omitted). */
+    deviceRegistry?: DeviceRegistry;
+    /** Forces every virtual controller to one type, ignoring the players' choice. */
+    forcedControllerType?: ControllerType;
     now?: () => number;
 };
 
@@ -51,6 +59,9 @@ const DPAD_BUTTONS: Record<DPadDirection, SupportedButton> = {
 
 export class WSHandler {
     private readonly activePlayers = new Set<number>();
+    private readonly activeTypes = new Map<number, ControllerType>();
+    private readonly devices: DeviceRegistry;
+    private readonly forcedControllerType?: ControllerType;
     private readonly inputLimiters = new Map<string, FixedWindowRateLimiter>();
     private readonly heldButtons = new Map<number, Set<SupportedButton>>();
     private readonly dpadStickState = new Map<string, Set<DPadDirection>>();
@@ -66,6 +77,7 @@ export class WSHandler {
     private readonly now: () => number;
     private cleanupTimer?: NodeJS.Timeout;
     private analogTimer?: NodeJS.Timeout;
+    private lastAnalogFlushAt = -Infinity;
 
     constructor(
         private readonly io: Server,
@@ -78,6 +90,8 @@ export class WSHandler {
         this.staleTimeoutMs = options.staleTimeoutMs ?? 30_000;
         this.maximumInputEventsPerSecond = options.maximumInputEventsPerSecond ?? 120;
         this.analogFlushMs = options.analogFlushMs ?? 8;
+        this.devices = options.deviceRegistry ?? new DeviceRegistry();
+        this.forcedControllerType = options.forcedControllerType;
         this.now = options.now ?? Date.now;
     }
 
@@ -114,7 +128,8 @@ export class WSHandler {
 
             const admission = this.authorizePlayer(capability, token);
             if (role === 'player' && admission) {
-                this.registerPlayerHandlers(socket, admission);
+                const cookie = readDeviceCookie(socket.request.headers.cookie);
+                this.registerPlayerHandlers(socket, admission, cookie ? deviceKeyFor(cookie) : undefined);
                 return;
             }
 
@@ -160,6 +175,7 @@ export class WSHandler {
         }
         for (const player of this.room.getPlayers()) this.releasePlayer(player.id);
         this.inputLimiters.clear();
+        this.devices.flush();
     }
 
     private authorizePlayer(capability: unknown, token: unknown): PlayerAdmission | undefined {
@@ -299,7 +315,7 @@ export class WSHandler {
         });
     }
 
-    private registerPlayerHandlers(socket: Socket, admission: PlayerAdmission): void {
+    private registerPlayerHandlers(socket: Socket, admission: PlayerAdmission, deviceKey?: string): void {
         let inputRevoked = false;
 
         const currentPlayer = (): Player | undefined => {
@@ -356,10 +372,16 @@ export class WSHandler {
                 return;
             }
 
-            const session = this.openControllerSession(admission, socket, request.deviceName);
+            const session = this.openControllerSession(admission, socket, request, deviceKey);
             if (!session) return;
 
-            this.activatePlayer(session.player.id);
+            const player = session.player;
+            if (deviceKey && !player.deviceKey) player.deviceKey = deviceKey;
+            player.controllerType = request.controllerType
+                ?? (deviceKey ? this.devices.get(deviceKey)?.controllerType : undefined)
+                ?? player.controllerType;
+            if (deviceKey) this.devices.remember(deviceKey, { slot: player.id, controllerType: player.controllerType });
+            this.activatePlayer(player.id);
             const profile = this.plugin.getProfile ? this.plugin.getProfile(session.player.id) : null;
             socket.emit('joined', {
                 playerId: session.player.id,
@@ -367,7 +389,8 @@ export class WSHandler {
                 profile,
                 reconnectToken: session.reconnectToken,
                 leaseMs: this.staleTimeoutMs,
-                maxPlayers: this.room.getMaximumPlayers()
+                maxPlayers: this.room.getMaximumPlayers(),
+                ...this.controllerTypeState(player)
             });
             socket.emit('layout', { layout: this.layoutFor(session.player.id) });
             this.io.to(GAME_SOCKET_ROOM).emit('player_joined', {
@@ -426,6 +449,22 @@ export class WSHandler {
             this.handleControl(player, control, event, permitsEdge);
         });
 
+        // The player changed Xbox <-> PlayStation in the phone menu.
+        socket.on('set_controller_type', (data: unknown) => {
+            const player = currentPlayer();
+            if (!player) return;
+            const controllerType = parseControllerType((data as { controllerType?: unknown } | null)?.controllerType);
+            if (!controllerType) {
+                this.emitError(socket, 'INVALID_INPUT', 'Choose xbox or ds4.');
+                return;
+            }
+            player.controllerType = controllerType;
+            if (deviceKey) this.devices.remember(deviceKey, { slot: player.id, controllerType });
+            this.activatePlayer(player.id);
+            socket.emit('controller_type', this.controllerTypeState(player));
+            this.broadcastPlayerList();
+        });
+
         socket.on('ping', () => {
             this.room.handlePing(socket.id);
             socket.emit('pong');
@@ -434,6 +473,7 @@ export class WSHandler {
         socket.on('disconnect', () => {
             const player = this.room.disconnect(socket.id);
             if (player) {
+                if (player.deviceKey) this.devices.remember(player.deviceKey, { slot: player.id });
                 this.releasePlayer(player.id);
                 this.io.to(GAME_SOCKET_ROOM).emit('player_left', { playerId: player.id });
             }
@@ -564,14 +604,26 @@ export class WSHandler {
         return this.heldButtons.get(playerId)?.has(button) ?? false;
     }
 
+    /**
+     * Leading edge: an update after a quiet period goes out immediately. Only
+     * bursts are merged (newest value wins) and flushed once per interval.
+     */
     private queueAnalog(playerId: number, key: string, apply: () => void): void {
+        if (!this.analogTimer) {
+            const sinceFlush = performance.now() - this.lastAnalogFlushAt;
+            if (sinceFlush >= this.analogFlushMs) {
+                this.lastAnalogFlushAt = performance.now();
+                apply();
+                return;
+            }
+            this.analogTimer = setTimeout(() => this.flushAnalog(), this.analogFlushMs - sinceFlush);
+        }
         this.pendingAnalog.set(`${playerId}:${key}`, { playerId, apply });
-        if (this.analogTimer) return;
-        this.analogTimer = setTimeout(() => this.flushAnalog(), this.analogFlushMs);
     }
 
     private flushAnalog(): void {
         this.analogTimer = undefined;
+        this.lastAnalogFlushAt = performance.now();
         const pending = Array.from(this.pendingAnalog.values());
         this.pendingAnalog.clear();
         for (const entry of pending) {
@@ -603,8 +655,10 @@ export class WSHandler {
     private openControllerSession(
         admission: PlayerAdmission,
         socket: Socket,
-        deviceName?: string
+        request: JoinRequest,
+        deviceKey?: string
     ): ControllerSession | undefined {
+        const deviceName = request.deviceName;
         if (admission.kind === 'join') {
             if (!this.authority.permitsJoin(admission.token)) {
                 this.emitError(
@@ -615,7 +669,13 @@ export class WSHandler {
                 setImmediate(() => socket.disconnect(true));
                 return undefined;
             }
-            const session = this.room.createSession(socket.id, deviceName);
+            // This phone still owns a slot (it lost its storage, opened a new tab,
+            // or switched networks): give it the same slot back immediately.
+            const own = deviceKey ? this.room.getPlayers().find(player => player.deviceKey === deviceKey) : undefined;
+            if (own) return this.takeOverPlayer(own, socket, deviceName);
+
+            const slotOrder = this.devices.slotOrderFor(deviceKey, this.room.getMaximumPlayers());
+            const session = this.room.createSession(socket.id, deviceName, slotOrder, deviceKey);
             if (!session) {
                 this.emitError(socket, 'ROOM_FULL', 'The player could not join this room.');
             }
@@ -625,6 +685,10 @@ export class WSHandler {
         const result = this.room.reconnect(admission.token, socket.id, deviceName);
         if (result.status === 'joined') return result.session;
         if (result.status === 'busy') {
+            // Same phone, new connection: no need to wait for the old lease to expire.
+            if (deviceKey && result.player.deviceKey === deviceKey) {
+                return this.takeOverPlayer(result.player, socket, deviceName);
+            }
             const retryAfterMs = Math.max(
                 100,
                 Math.ceil(
@@ -652,10 +716,52 @@ export class WSHandler {
         return undefined;
     }
 
+    private takeOverPlayer(player: Player, socket: Socket, deviceName?: string): ControllerSession {
+        const previousSocketId = player.socketId;
+        const previousLimiter = this.inputLimiters.get(player.reconnectKey);
+        this.inputLimiters.delete(player.reconnectKey);
+        const session = this.room.takeOver(player, socket.id, deviceName);
+        // Keep the rate budget across the takeover.
+        if (previousLimiter) this.inputLimiters.set(player.reconnectKey, previousLimiter);
+        this.neutralizePlayer(player.id);
+        if (previousSocketId && previousSocketId !== socket.id) {
+            const previous = this.io.sockets.sockets.get(previousSocketId);
+            if (previous) {
+                previous.emit('replaced', { reason: 'This controller was opened again on the same phone.' });
+                setImmediate(() => previous.disconnect(true));
+            }
+        }
+        return session;
+    }
+
+    private effectiveControllerType(player: Player): ControllerType {
+        return this.forcedControllerType
+            ?? player.controllerType
+            // Windows XInput exposes only four Xbox pads.
+            ?? (player.id <= 4 ? 'xbox' : 'ds4');
+    }
+
+    private controllerTypeState(player: Player) {
+        const xboxCount = Array.from(this.activeTypes.values()).filter(type => type === 'xbox').length;
+        return {
+            controllerType: this.effectiveControllerType(player),
+            controllerTypeForced: this.forcedControllerType !== undefined,
+            xinputOverflow: xboxCount > 4
+        };
+    }
+
+    /** Creates the virtual controller, or recreates it when the player switched type. */
     private activatePlayer(playerId: number): void {
-        if (this.activePlayers.has(playerId)) return;
-        this.plugin.initPlayer(playerId);
+        const player = this.room.getPlayer(playerId);
+        const controllerType = player ? this.effectiveControllerType(player) : (playerId <= 4 ? 'xbox' : 'ds4');
+        if (this.activePlayers.has(playerId)) {
+            if (this.activeTypes.get(playerId) === controllerType) return;
+            this.neutralizePlayer(playerId);
+            this.plugin.releasePlayer(playerId);
+        }
+        this.plugin.initPlayer(playerId, controllerType);
         this.activePlayers.add(playerId);
+        this.activeTypes.set(playerId, controllerType);
     }
 
     private inputLimiterFor(reconnectKey: string): FixedWindowRateLimiter {
@@ -673,6 +779,7 @@ export class WSHandler {
     private releasePlayer(playerId: number): void {
         this.dropPlayerInputState(playerId);
         this.heldButtons.delete(playerId);
+        this.activeTypes.delete(playerId);
         if (!this.activePlayers.delete(playerId)) return;
         this.plugin.releasePlayer(playerId);
     }

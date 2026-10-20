@@ -179,7 +179,10 @@ function App() {
                                                     P{player.playerId}
                                                 </div>
                                                 <div>
-                                                    <p className="text-white font-semibold">{player.deviceName || `Player ${player.playerId}`}</p>
+                                                    <p className="text-white font-semibold">
+                                                        {player.deviceName || `Player ${player.playerId}`}
+                                                        {player.controllerType && <span className={`ml-2 px-2 py-0.5 rounded-full text-xs font-bold ${player.controllerType === 'ds4' ? 'bg-blue-600/40 text-blue-200' : 'bg-green-700/40 text-green-200'}`}>{player.controllerType === 'ds4' ? 'PlayStation' : 'Xbox'}</span>}
+                                                    </p>
                                                     <p className={`text-sm ${player.connected ? 'text-green-400' : 'text-red-400'}`}>
                                                         {player.connected ? 'Connected' : 'Disconnected'}
                                                     </p>

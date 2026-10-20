@@ -1,5 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
 import type { CSSProperties, PointerEvent as ReactPointerEvent } from 'react';
+import { readStick, stickChanged, STICK_MIN_GAP_MS } from '../stickMath';
+import type { StickGeometry, StickValue } from '../stickMath';
+import { ControllerTypeSetting } from './ControllerTypeSetting';
+import type { ControllerType } from './ControllerTypeSetting';
+import './editable-controller.css';
 import './game-controller.css';
 
 /**
@@ -42,9 +47,17 @@ export function applyControlUpdates(layout: GameLayout, updates: Record<string, 
     };
 }
 
-type Props = { playerId: number; layout: GameLayout; send: (event: ControlEvent) => void };
+type Props = {
+    playerId: number;
+    layout: GameLayout;
+    send: (event: ControlEvent) => void;
+    controllerType?: ControllerType;
+    controllerTypeLocked?: boolean;
+    onControllerTypeChange?: (value: ControllerType) => void;
+};
 
-export function GameController({ playerId, layout, send }: Props) {
+export function GameController({ playerId, layout, send, controllerType, controllerTypeLocked, onControllerTypeChange }: Props) {
+    const [menu, setMenu] = useState(false);
     const canvas = useRef<HTMLDivElement>(null);
     const [bounds, setBounds] = useState({ width: 800, height: 360 });
     // Bumping the epoch remounts every control, and each one releases what it holds.
@@ -79,6 +92,14 @@ export function GameController({ playerId, layout, send }: Props) {
 
     return <div className="game-controller" style={{ '--player': playerColor, background: layout.background } as CSSProperties}>
         <div className="game-controller-badge"><span>P{playerId}</span>{layout.name}</div>
+        <button className="floating-menu" aria-label="Controller menu" onClick={() => { setEpoch(value => value + 1); setMenu(!menu); }}>⋯</button>
+        {menu && <section className="controller-menu" aria-label="Controller settings">
+            <strong>Player {playerId}</strong>
+            <button onClick={() => { setMenu(false); document.documentElement.requestFullscreen?.().catch(() => setMenu(true)); }}>Fullscreen</button>
+            {controllerType && onControllerTypeChange && <ControllerTypeSetting value={controllerType} locked={controllerTypeLocked} onChange={onControllerTypeChange} />}
+            <small>The game chose this layout. It switches back to the full gamepad when the game closes.</small>
+            <button onClick={() => setMenu(false)}>Close menu</button>
+        </section>}
         <div ref={canvas} className="game-controller-canvas">
             {layout.controls.map(control => {
                 const px = Math.max(control.type === 'text' ? 10 : 44, control.size * unit);
@@ -139,9 +160,9 @@ function GameButton({ control, emit }: { control: Extract<LayoutControl, { type:
 
 function GameStick({ control, emit }: { control: Extract<LayoutControl, { type: 'joystick' }>; emit: Emit }) {
     const pointer = useRef<number | null>(null), knob = useRef<HTMLDivElement>(null);
-    const geometry = useRef({ x: 0, y: 0, radius: 1 });
-    const pending = useRef<{ x: number; y: number } | null>(null);
-    const lastSent = useRef({ x: 0, y: 0 }), lastAt = useRef(-Infinity);
+    const geometry = useRef<StickGeometry>({ x: 0, y: 0, radius: 1 });
+    const pending = useRef<StickValue | null>(null);
+    const lastSent = useRef<StickValue>({ x: 0, y: 0 }), lastAt = useRef(-Infinity);
     const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
     const latest = useRef({ id: control.id, emit });
     latest.current = { id: control.id, emit };
@@ -151,8 +172,6 @@ function GameStick({ control, emit }: { control: Extract<LayoutControl, { type: 
         const value = pending.current;
         if (!value) return;
         pending.current = null;
-        // Skip updates the game would not notice; this keeps traffic low.
-        if (Math.abs(value.x - lastSent.current.x) < 0.01 && Math.abs(value.y - lastSent.current.y) < 0.01) return;
         lastSent.current = value;
         lastAt.current = performance.now();
         latest.current.emit({ id: latest.current.id, ...value });
@@ -165,13 +184,12 @@ function GameStick({ control, emit }: { control: Extract<LayoutControl, { type: 
 
     const move = (event: ReactPointerEvent<HTMLDivElement>, force = false) => {
         if (pointer.current !== event.pointerId) return;
-        const { x: cx, y: cy, radius } = geometry.current;
-        let x = (event.clientX - cx) / radius, y = (event.clientY - cy) / radius;
-        const length = Math.hypot(x, y);
-        if (length > 1) { x /= length; y /= length; }
-        if (knob.current) knob.current.style.transform = `translate3d(${x * radius}px,${y * radius}px,0)`;
-        pending.current = { x: round(x), y: round(y) };
-        const remaining = 16 - (performance.now() - lastAt.current);
+        const value = readStick(geometry.current, event.clientX, event.clientY), radius = geometry.current.radius;
+        if (knob.current) knob.current.style.transform = `translate3d(${value.x * radius}px,${value.y * radius}px,0)`;
+        // Send on meaningful change, immediately; only very fast bursts are merged.
+        if (!force && !stickChanged(value, lastSent.current)) { pending.current = null; return; }
+        pending.current = value;
+        const remaining = STICK_MIN_GAP_MS - (performance.now() - lastAt.current);
         if (force || remaining <= 0) { if (timer.current !== null) clearTimeout(timer.current); flush(); }
         else if (timer.current === null) timer.current = setTimeout(flush, remaining);
     };
@@ -269,6 +287,3 @@ function clamp(value: number, minimum: number, maximum: number) {
     return maximum < minimum ? (minimum + maximum) / 2 : Math.max(minimum, Math.min(maximum, value));
 }
 
-function round(value: number) {
-    return Math.round(value * 1000) / 1000;
-}

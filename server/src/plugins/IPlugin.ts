@@ -1,3 +1,5 @@
+import type { ControllerType } from '../protocol';
+
 export interface IPlugin {
     name: string;
     version: string;
@@ -16,7 +18,7 @@ export interface IPlugin {
     sendAnalogInput(playerIndex: number, stick: 'left' | 'right', x: number, y: number): void;
 
     /** Initialize one player controller for the current connection lifecycle. */
-    initPlayer(playerIndex: number): void;
+    initPlayer(playerIndex: number, controllerType?: ControllerType): void;
 
     /** Reset and release one player controller. Implementations must be idempotent. */
     releasePlayer(playerIndex: number): void;

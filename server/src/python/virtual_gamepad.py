@@ -16,10 +16,12 @@ from typing import Dict, Set, Union
 controllers: Dict[int, Union[vg.VX360Gamepad, vg.VDS4Gamepad]] = {}
 # Held D-pad directions per DS4 player (DS4 reports the D-pad as one hat value)
 ds4_dpad: Dict[int, Set[str]] = {}
+# Controller type each player picked on their phone ('xbox' or 'ds4')
+player_types: Dict[int, str] = {}
 
-# Windows XInput only exposes four Xbox controllers, so by default players 5+
-# get DualShock 4 pads, which have no such limit. Override with
-# FREEJOY_CONTROLLER_TYPE=xbox (always Xbox) or ds4 (always DualShock 4).
+# Players choose Xbox or PlayStation on their phone and the server sends it with
+# 'init'. Without a choice, Windows XInput's four-Xbox-pad limit decides: players
+# 5+ get DualShock 4 pads. FREEJOY_CONTROLLER_TYPE=xbox|ds4 forces one type.
 CONTROLLER_TYPE = os.environ.get("FREEJOY_CONTROLLER_TYPE", "auto").strip().lower()
 XINPUT_LIMIT = 4
 
@@ -81,6 +83,8 @@ DS4_HAT = {
 
 
 def uses_ds4(player_id: int) -> bool:
+    if player_id in player_types:
+        return player_types[player_id] == "ds4"
     if CONTROLLER_TYPE == "ds4":
         return True
     if CONTROLLER_TYPE == "xbox":
@@ -226,6 +230,12 @@ def main():
                     handle_analog(player_id, stick, x, y)
                 
                 elif action == 'init':
+                    controller_type = cmd.get('controllerType')
+                    if controller_type in ('xbox', 'ds4'):
+                        # A different type needs a different virtual device.
+                        if player_id in controllers and uses_ds4(player_id) != (controller_type == 'ds4'):
+                            handle_disconnect(player_id)
+                        player_types[player_id] = controller_type
                     # Pre-create controller so emulator sees it
                     get_or_create_controller(player_id)
                     log(f"P{player_id} controller initialized")

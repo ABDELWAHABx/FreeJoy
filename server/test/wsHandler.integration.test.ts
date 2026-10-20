@@ -19,13 +19,17 @@ class FakePlugin implements IPlugin {
     public readonly version = '1';
     public readonly maxPlayers = 4;
     public readonly initialized: number[] = [];
+    public readonly initializedTypes: Array<string | undefined> = [];
     public readonly released: number[] = [];
     public readonly buttons: Array<{ player: number; button: string; pressed: boolean }> = [];
     public readonly analog: Array<{ player: number; stick: string; x: number; y: number }> = [];
 
     async init(): Promise<void> { }
     async cleanup(): Promise<void> { }
-    initPlayer(playerIndex: number): void { this.initialized.push(playerIndex); }
+    initPlayer(playerIndex: number, controllerType?: string): void {
+        this.initialized.push(playerIndex);
+        this.initializedTypes.push(controllerType);
+    }
     releasePlayer(playerIndex: number): void { this.released.push(playerIndex); }
     sendButtonPress(player: number, button: string, pressed: boolean): void {
         this.buttons.push({ player, button, pressed });
@@ -62,7 +66,7 @@ type JoinedPayload = {
 async function createHarness(options: HarnessOptions = {}): Promise<Harness> {
     const http = createServer();
     const io = new SocketServer(http);
-    const reconnectTokens = ['a', 'b', 'c', 'd'].map(character => character.repeat(43));
+    const reconnectTokens = 'abcdefghijklmnopqrstuvwxyz'.split('').map(character => character.repeat(43));
     const room = new RoomManager(4, {
         roomId: 'ABCDEF12',
         serverIp: '127.0.0.1',
@@ -94,10 +98,12 @@ function createClient(
     harness: Harness,
     role: 'host' | 'player' | 'game',
     token: string,
-    capability?: 'join' | 'reconnect'
+    capability?: 'join' | 'reconnect',
+    deviceCookie?: string
 ): Socket {
     const socket = createSocket(harness.url, {
         auth: { role, token, capability },
+        extraHeaders: deviceCookie ? { cookie: `freejoy_device=${deviceCookie}` } : undefined,
         autoConnect: false,
         forceNew: true,
         reconnection: false,
@@ -111,9 +117,10 @@ async function connect(
     harness: Harness,
     role: 'host' | 'player' | 'game',
     token: string,
-    capability?: 'join' | 'reconnect'
+    capability?: 'join' | 'reconnect',
+    deviceCookie?: string
 ): Promise<Socket> {
-    const socket = createClient(harness, role, token, capability);
+    const socket = createClient(harness, role, token, capability, deviceCookie);
     const connected = waitForEvent(socket, 'connect');
     socket.connect();
     await connected;
@@ -464,6 +471,104 @@ test('players cannot connect with the game role', async () => {
         const rejected = waitForEvent<{ code: string }>(socket, 'operation_error');
         socket.connect();
         assert.equal((await rejected).code, 'AUTH_REQUIRED');
+    } finally {
+        await closeHarness(harness);
+    }
+});
+
+const PHONE_COOKIES = ['1', '2', '3', '4'].map(character => character.repeat(43));
+
+async function joinAs(
+    harness: Harness,
+    cookie: string,
+    request: Record<string, unknown> = {}
+): Promise<{ socket: Socket; joined: JoinedPayload & { controllerType: string } }> {
+    const socket = await connect(harness, 'player', JOIN_TOKEN, 'join', cookie);
+    const joined = waitForEvent<JoinedPayload & { controllerType: string }>(socket, 'joined');
+    socket.emit('join', { roomId: 'ABCDEF12', ...request });
+    return { socket, joined: await joined };
+}
+
+test('phones get their own player number back when they rejoin in a different order', async () => {
+    let now = 1_000;
+    const harness = await createHarness({ now: () => now, staleTimeoutMs: 5_000 });
+    try {
+        const first: Socket[] = [];
+        for (const [index, cookie] of PHONE_COOKIES.slice(0, 3).entries()) {
+            const { socket, joined } = await joinAs(harness, cookie);
+            assert.equal(joined.playerId, index + 1);
+            first.push(socket);
+        }
+
+        // Everyone drops (e.g. Wi-Fi hiccup) and their slots are purged entirely.
+        for (const socket of first) socket.disconnect();
+        await waitUntil(() => harness.room.getPlayersList().every(player => !player.connected));
+        now += 6_000;
+        harness.handler.cleanupStalePlayers();
+        now += 6_000;
+        harness.handler.cleanupStalePlayers();
+        assert.equal(harness.room.getPlayersList().length, 0);
+
+        // A brand-new phone arrives first; it must not steal anyone's number.
+        const stranger = await joinAs(harness, '9'.repeat(43));
+        assert.equal(stranger.joined.playerId, 4);
+
+        // Returning phones come back in reverse order and still get their own slot.
+        for (const [index, cookie] of [...PHONE_COOKIES.slice(0, 3).entries()].reverse()) {
+            const { joined } = await joinAs(harness, cookie);
+            assert.equal(joined.playerId, index + 1, `phone ${index + 1}`);
+        }
+    } finally {
+        await closeHarness(harness);
+    }
+});
+
+test('the same phone reconnecting takes its slot over immediately', async () => {
+    const harness = await createHarness();
+    try {
+        const original = await joinAs(harness, PHONE_COOKIES[0]!);
+        await joinAs(harness, PHONE_COOKIES[1]!);
+        const replaced = waitForEvent(original.socket, 'replaced');
+        // Lost storage / new tab: joins with the QR capability but the same cookie.
+        const again = await joinAs(harness, PHONE_COOKIES[0]!);
+        assert.equal(again.joined.playerId, 1);
+        await replaced;
+        assert.deepEqual(harness.room.getPlayersList().map(player => [player.playerId, player.connected]), [[1, true], [2, true]]);
+
+        // Busy reconnect capability from the same phone also takes over without waiting.
+        const viaReconnect = await connect(harness, 'player', again.joined.reconnectToken, 'reconnect', PHONE_COOKIES[0]);
+        const joined = await join(viaReconnect);
+        assert.equal(joined.playerId, 1);
+
+        // A different phone holding a stolen capability still has to wait.
+        const thief = await connect(harness, 'player', joined.reconnectToken, 'reconnect', PHONE_COOKIES[2]);
+        const busy = waitForEvent<{ code: string }>(thief, 'operation_error');
+        thief.emit('join', { roomId: 'ABCDEF12' });
+        assert.equal((await busy).code, 'IDENTITY_BUSY');
+    } finally {
+        await closeHarness(harness);
+    }
+});
+
+test('players choose Xbox or PlayStation and can switch from the phone', async () => {
+    const harness = await createHarness();
+    try {
+        const { socket, joined } = await joinAs(harness, PHONE_COOKIES[0]!, { controllerType: 'ds4' });
+        assert.equal(joined.controllerType, 'ds4');
+        assert.deepEqual(harness.plugin.initializedTypes, ['ds4']);
+
+        const switched = waitForEvent<{ controllerType: string }>(socket, 'controller_type');
+        socket.emit('set_controller_type', { controllerType: 'xbox' });
+        assert.equal((await switched).controllerType, 'xbox');
+        assert.deepEqual(harness.plugin.initializedTypes, ['ds4', 'xbox']);
+        assert.deepEqual(harness.plugin.released, [1]);
+        assert.equal(harness.room.getPlayersList()[0]?.controllerType, 'xbox');
+
+        // The choice is remembered for the next join from this phone.
+        socket.disconnect();
+        await waitUntil(() => harness.plugin.released.length === 2);
+        const back = await joinAs(harness, PHONE_COOKIES[0]!);
+        assert.equal(back.joined.controllerType, 'xbox');
     } finally {
         await closeHarness(harness);
     }

@@ -1,4 +1,5 @@
 import { IPlugin } from './IPlugin';
+import type { ControllerType } from '../protocol';
 import * as path from 'path';
 import { spawn, ChildProcess } from 'child_process';
 
@@ -75,11 +76,12 @@ export class RyujinxPlugin implements IPlugin {
         this.pythonProcess = null;
     }
 
-    initPlayer(playerIndex: number): void {
-        console.log(`[Ryujinx] Initializing controller for Player ${playerIndex}`);
+    initPlayer(playerIndex: number, controllerType?: ControllerType): void {
+        console.log(`[Ryujinx] Initializing ${controllerType ?? 'default'} controller for Player ${playerIndex}`);
         this.sendCommand({
             action: 'init',
-            playerId: playerIndex
+            playerId: playerIndex,
+            controllerType
         });
     }
 

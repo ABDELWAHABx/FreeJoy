@@ -41,3 +41,17 @@
     background:#0b0d14e6;border:1px solid #ffffff30;color:#fff;font:700 15px system-ui,sans-serif;text-align:center;box-shadow:0 10px 30px #0008;pointer-events:none;animation:freejoy-toast-in .18s ease-out}
 @keyframes freejoy-toast-in{from{opacity:0;transform:translate(-50%,-10px)}to{opacity:1;transform:translate(-50%,0)}}
 @media(prefers-reduced-motion:reduce){.game-button,.game-stick-knob,.dpad-arm{transition:none}.freejoy-toast{animation:none}}
+
+/* First-run "Xbox or PlayStation?" picker */
+.type-picker{position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;padding:16px max(16px,env(safe-area-inset-right)) 16px max(16px,env(safe-area-inset-left));
+    background:radial-gradient(ellipse at 20% 80%,#00d4ff22,transparent 60%),radial-gradient(ellipse at 80% 20%,#ff4d6d22,transparent 60%),#10121b;color:#fff;font-family:system-ui,sans-serif;text-align:center;overflow:auto}
+.type-picker h1{margin:0;font-size:clamp(18px,4.5vmin,30px);font-weight:900}
+.type-picker p{margin:0;color:#ffffff99;font-size:13px}
+.type-picker-options{display:flex;gap:14px;margin-top:10px;width:min(720px,100%)}
+.type-option{flex:1;display:flex;flex-direction:column;align-items:center;gap:6px;padding:18px 12px;border-radius:20px;border:2px solid #ffffff22;color:#fff;cursor:pointer;touch-action:manipulation;transition:transform 80ms}
+.type-option:active{transform:scale(.97)}
+.type-option strong{font-size:22px}.type-option small{color:#ffffffb3;font-size:12px;line-height:1.35}
+.type-option.is-xbox{background:linear-gradient(160deg,#107c10cc,#0b3d0bcc)}
+.type-option.is-ds4{background:linear-gradient(160deg,#2f5dd8cc,#14286acc)}
+.type-glyphs{font-size:20px;font-weight:800;letter-spacing:3px;opacity:.9}
+.controller-menu label select:disabled{opacity:.5}

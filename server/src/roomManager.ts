@@ -53,8 +53,20 @@ export class RoomManager {
         return isValid;
     }
 
-    public createSession(socketId: string, deviceName?: string): ControllerSession | null {
-        for (let slot = 1; slot <= this.maximumPlayers; slot += 1) {
+    /**
+     * Opens a new player slot. `slotOrder` lists the preferred slots first, so a
+     * returning phone gets its old player number back.
+     */
+    public createSession(
+        socketId: string,
+        deviceName?: string,
+        slotOrder: number[] = [],
+        deviceKey?: string
+    ): ControllerSession | null {
+        const candidates = [...slotOrder];
+        for (let slot = 1; slot <= this.maximumPlayers; slot += 1) candidates.push(slot);
+        for (const slot of candidates) {
+            if (!Number.isInteger(slot) || slot < 1 || slot > this.maximumPlayers) continue;
             if (this.players.has(slot)) continue;
             const capability = this.issueUniqueReconnectCapability();
             const player: Player = {
@@ -63,13 +75,34 @@ export class RoomManager {
                 socketId,
                 connected: true,
                 lastPing: this.now(),
-                deviceName
+                deviceName,
+                deviceKey
             };
             this.players.set(slot, player);
             console.log(`[Room] Player ${slot} Joined${deviceName ? ` - ${deviceName}` : ''}`);
             return { player, reconnectToken: capability.token };
         }
         return null;
+    }
+
+    /**
+     * The same phone came back on a new connection (new tab, Wi-Fi switch, lost
+     * storage). It keeps its slot and gets a fresh reconnect capability; the old
+     * connection loses the slot.
+     */
+    public takeOver(player: Player, socketId: string, deviceName?: string): ControllerSession {
+        const capability = this.issueUniqueReconnectCapability();
+        player.reconnectKey = capability.key;
+        player.socketId = socketId;
+        player.connected = true;
+        player.lastPing = this.now();
+        if (deviceName) player.deviceName = deviceName;
+        console.log(`[Room] Player ${player.id} taken over by the same device`);
+        return { player, reconnectToken: capability.token };
+    }
+
+    public getPlayer(playerId: number): Player | undefined {
+        return this.players.get(playerId);
     }
 
     public permitsReconnect(candidate: unknown): boolean {
@@ -158,11 +191,15 @@ export class RoomManager {
     }
 
     public getPlayersList(): PublicPlayer[] {
-        return Array.from(this.players.values()).map(player => ({
-            playerId: player.id,
-            connected: player.connected,
-            deviceName: player.deviceName
-        }));
+        return Array.from(this.players.values()).map(player => {
+            const entry: PublicPlayer = {
+                playerId: player.id,
+                connected: player.connected,
+                deviceName: player.deviceName
+            };
+            if (player.controllerType) entry.controllerType = player.controllerType;
+            return entry;
+        });
     }
 
     public getPlayers(): Player[] {

@@ -47,7 +47,8 @@ Reconnect handshake auth:
 
 ### Client events
 
-- `join { roomId, deviceName? }`
+- `join { roomId, deviceName?, controllerType? }` (`controllerType` is `xbox` or `ds4`)
+- `set_controller_type { controllerType }` switches the virtual controller between Xbox and PlayStation
 - `input { btn, state }`
 - `analog { stick, x, y }`
 - `control { id, state }` / `control { id, x, y }` / `control { id, direction, state }` for game-defined layouts
@@ -57,7 +58,9 @@ The room ID is eight hexadecimal characters. Device names contain at most 80 dis
 
 ### Server events
 
-- `joined { playerId, roomId, profile, reconnectToken, leaseMs, maxPlayers }`
+- `joined { playerId, roomId, profile, reconnectToken, leaseMs, maxPlayers, controllerType, controllerTypeForced, xinputOverflow }`
+- `controller_type { controllerType, controllerTypeForced, xinputOverflow }` after a switch
+- `replaced { reason }` when the same phone opened the controller on a new connection; that old connection is then closed
 - `layout { layout | null }` (sent after `joined` and whenever the layout changes; `null` = the regular gamepad)
 - `control_updates { updates }`, `notify { text }`, `vibrate { pattern }`
 - `pong`
@@ -66,6 +69,10 @@ The room ID is eight hexadecimal characters. Device names contain at most 80 dis
 
 An invalid room produces `ROOM_CLOSED` without returning or redirecting to the active room identifier.
 The bundled controller derives its heartbeat from `leaseMs`. `IDENTITY_BUSY` includes an authoritative `retryAfterMs`; the client keeps retrying through the entire old lease. An unresponsive live controller is neutralized first and its reconnect record is retained for one additional grace period before removal.
+
+### Stable player numbers
+
+Opening `/pad` sets an HttpOnly cookie `freejoy_device` (random, about 400 days). The server keeps only its SHA-256 digest, mapped to the phone's last slot and controller type, in `devices.json` under `FREEJOY_DATA_DIR` (default `~/.freejoy`), so it survives server restarts. A joining phone gets its remembered slot when free; new phones prefer slots nobody remembers, and only then borrow the slot of the phone that has been away the longest. When a phone that still owns a slot connects again (new tab, Wi-Fi switch, lost storage), it takes that slot over immediately instead of waiting for `IDENTITY_BUSY`. The cookie is only a preference: a different phone never takes over a slot through it.
 
 ## Host socket
 

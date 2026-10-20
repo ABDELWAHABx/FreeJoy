@@ -2,9 +2,14 @@ import {useEffect,useRef,useState} from 'react';
 import type {PointerEvent as ReactPointerEvent} from 'react';
 import {actions,defaultLayout,layoutKey,parseLayout,serializeLayout,clampPosition,isAction,moveIds,moveControls,actionLabel} from '../layout';
 import type {Control,Action,MoveMode,SymbolStyle} from '../layout';
+import {readStick,stickChanged,STICK_MIN_GAP_MS} from '../stickMath';
+import type {StickGeometry,StickValue} from '../stickMath';
+import {ControllerTypeSetting} from './ControllerTypeSetting';
+import type {ControllerType} from './ControllerTypeSetting';
 import './editable-controller.css';
 
-type Props={playerId:number;sendInput:(button:string,state:0|1)=>void;sendAnalog:(stick:'left'|'right',x:number,y:number)=>void};
+type Props={playerId:number;sendInput:(button:string,state:0|1)=>void;sendAnalog:(stick:'left'|'right',x:number,y:number)=>void;
+    controllerType?:ControllerType;controllerTypeLocked?:boolean;onControllerTypeChange?:(value:ControllerType)=>void};
 function initialLayout(){try{const raw=localStorage.getItem(layoutKey);return raw?parseLayout(JSON.parse(raw)):defaultLayout;}catch{return defaultLayout;}}
 export function EditableController(props:Props){
     const [layout,setLayout]=useState<Control[]>(initialLayout);
@@ -15,6 +20,9 @@ export function EditableController(props:Props){
     const [moveMode,setMoveMode]=useState<MoveMode>('group');
     const [symbols,setSymbols]=useState<SymbolStyle>(()=>{try{return localStorage.getItem('freejoy:symbols')==='playstation'?'playstation':'xbox';}catch{return 'xbox';}});
     const label=(action:Action)=>actionLabel(action,symbols);
+    // Button symbols follow the controller type the PC sees; players can still override them below.
+    const firstType=useRef(true);
+    useEffect(()=>{if(firstType.current){firstType.current=false;return;}if(props.controllerType)setSymbols(props.controllerType==='ds4'?'playstation':'xbox');},[props.controllerType]);
     const beginEdit=()=>{neutral();before.current=layout;setMenu(false);setEditing(true);setToolsVisible(true);setMessage('Drag controls. Choose Group or Individual.');};
     const fullscreen=()=>{setMenu(false);document.documentElement.requestFullscreen?.().catch(()=>{setMenu(true);setMessage('Fullscreen unavailable. Try opening in Chrome.');});};
     const [selected,setSelected]=useState('a');
@@ -59,8 +67,9 @@ export function EditableController(props:Props){
         {!editing&&<><button className="floating-menu" aria-label="Controller menu" onClick={()=>{neutral();setMenu(!menu);}}>⋯</button>
             {menu&&<section className="controller-menu" aria-label="Controller settings">
                 <strong>Player {props.playerId}</strong><button onClick={beginEdit}>Edit layout</button><button onClick={fullscreen}>Fullscreen</button>
+                {props.controllerType&&props.onControllerTypeChange&&<ControllerTypeSetting value={props.controllerType} locked={props.controllerTypeLocked} onChange={props.onControllerTypeChange}/>}
                 <label>Phone symbols <select aria-label="Phone symbols" value={symbols} onChange={e=>{const value=e.target.value==='playstation'?'playstation':'xbox';setSymbols(value);try{localStorage.setItem('freejoy:symbols',value);}catch{setMessage('Symbols changed for this session only.');}}}><option value="xbox">Xbox · A B X Y</option><option value="playstation">PlayStation · × ○ □ △</option></select></label>
-                <small>Phone symbols only. The laptop receives an Xbox controller.</small>
+                <small>Phone symbols only change the labels. "Controller type" decides what the PC sees.</small>
                 <small>For an app shortcut, use your browser's Add to home screen. Fullscreen works without installation. App installation availability depends on your browser and a secure connection.</small>
                 <span role="status">{message}</span><button onClick={()=>setMenu(false)}>Close menu</button>
             </section>}</>}
@@ -101,26 +110,26 @@ function PadButton({action,label,send}:{action:Action;label:string;send:Props['s
 }
 function PadStick({stick,send}:{stick:'left'|'right';send:Props['sendAnalog']}){
     const pointer=useRef<number|null>(null),knob=useRef<HTMLDivElement>(null);
-    const geometry=useRef({x:0,y:0,radius:1});
-    const pending=useRef<{x:number;y:number}|null>(null),timer=useRef<ReturnType<typeof setTimeout>|null>(null),last=useRef(-Infinity);
+    const geometry=useRef<StickGeometry>({x:0,y:0,radius:1});
+    const pending=useRef<StickValue|null>(null),timer=useRef<ReturnType<typeof setTimeout>|null>(null),last=useRef(-Infinity),sent=useRef<StickValue>({x:0,y:0});
     const latestSend=useRef(send);latestSend.current=send;
     const cancel=()=>{if(timer.current!==null)clearTimeout(timer.current);timer.current=null;pending.current=null;};
-    const flush=()=>{timer.current=null;const p=pending.current;if(!p)return;pending.current=null;last.current=performance.now();latestSend.current(stick,p.x,p.y);};
+    const flush=()=>{timer.current=null;const p=pending.current;if(!p)return;pending.current=null;last.current=performance.now();sent.current=p;latestSend.current(stick,p.x,p.y);};
     useEffect(()=>()=>{cancel();if(pointer.current!==null)latestSend.current(stick,0,0);},[stick]);
     const move=(e:ReactPointerEvent<HTMLDivElement>,force=false)=>{
         if(pointer.current!==e.pointerId)return;
-        const {x:cx,y:cy,radius}=geometry.current;
-        let x=(e.clientX-cx)/radius,y=(e.clientY-cy)/radius;const len=Math.hypot(x,y);if(len>1){x/=len;y/=len;}
+        const value=readStick(geometry.current,e.clientX,e.clientY),radius=geometry.current.radius;
         // Paint locally without a React render or a network round trip.
-        if(knob.current)knob.current.style.transform=`translate3d(${x*radius}px,${y*radius}px,0)`;
-        pending.current={x,y};const remaining=16-(performance.now()-last.current);
+        if(knob.current)knob.current.style.transform=`translate3d(${value.x*radius}px,${value.y*radius}px,0)`;
+        if(!force&&!stickChanged(value,sent.current)){pending.current=null;return;}
+        pending.current=value;const remaining=STICK_MIN_GAP_MS-(performance.now()-last.current);
         if(force||remaining<=0){if(timer.current!==null)clearTimeout(timer.current);flush();}
         else if(timer.current===null)timer.current=setTimeout(flush,remaining);
     };
     const end=(e:ReactPointerEvent<HTMLDivElement>)=>{if(pointer.current===e.pointerId){
         pointer.current=null;cancel();e.currentTarget.classList.remove('is-held');
         if(knob.current)knob.current.style.transform='translate3d(0,0,0)';
-        latestSend.current(stick,0,0);
+        sent.current={x:0,y:0};latestSend.current(stick,0,0);
     }};
     return <div className="pad-stick" role="slider" aria-label={stick+' stick'} aria-valuemin={-1} aria-valuemax={1} aria-valuenow={0}
         onPointerDown={e=>{if(pointer.current!==null)return;e.preventDefault();const box=e.currentTarget.getBoundingClientRect();
